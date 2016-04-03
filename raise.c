@@ -18,7 +18,8 @@ void exitWithError(const char *reason)
     exit(EXIT_FAILURE);
 }
 
-void readCoreFile(char * filePath) {
+void readCoreFile(char * filePath)
+{
     FILE *coreFile = fopen(filePath, "r");
 
     if (coreFile == NULL) {
@@ -41,12 +42,13 @@ int main(int argc, char *argv[])
         context.uc_mcontext.gregs[REG_ESP] = STACK_TOP_ADDRESS - 16;
         setcontext(&context);
     }
-
+    getcontext(&context);
     if (argc != 2) {
         exitWithError("Usage: ./raise <core-file>\n");
     }
 
     readCoreFile(argv[1]);
 
+    printf("OK!\n");
     return 0;
 }
