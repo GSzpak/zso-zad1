@@ -18,35 +18,35 @@ void exitWithError(const char *reason)
     exit(EXIT_FAILURE);
 }
 
-int main(int argc, char *argv[])
-{
-    getcontext(&context);
-    if (!contextChanged) {
-        printf("Changing context\n");
-        contextChanged = 1;
-        int stackSize = 2 * getpagesize();
-        void *stackBottom = (void *) (STACK_TOP_ADDRESS - stackSize);
-        void *_addr = mmap(stackBottom, stackSize,
-                           PROT_READ | PROT_WRITE,
-                           MAP_ANONYMOUS | MAP_PRIVATE,
-                           -1, 0);
-        // TODO: check for error
-        context.uc_mcontext.gregs[REG_ESP] = STACK_TOP_ADDRESS - 16;
-        setcontext(&context);
-    }
-    printf("Context changed! %s\n", argv[1]);
-
-    if (argc != 2) {
-        exitWithError("Usage: ./raise <core-file>\n");
-    }
-    /*
-    FILE *coreFile = fopen(argv[1], "r");
+void readCoreFile(char * filePath) {
+    FILE *coreFile = fopen(filePath, "r");
 
     if (coreFile == NULL) {
         exitWithError("Error while opening core file\n");
     }
 
     fclose(coreFile);
-    */
+}
+
+int main(int argc, char *argv[])
+{
+    getcontext(&context);
+    if (!contextChanged) {
+        contextChanged = 1;
+        int stackSize = 2 * getpagesize();
+        void *stackBottom = (void *) (STACK_TOP_ADDRESS - stackSize);
+        mmap(stackBottom, stackSize, PROT_READ | PROT_WRITE,
+             MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+        // TODO: check for error
+        context.uc_mcontext.gregs[REG_ESP] = STACK_TOP_ADDRESS - 16;
+        setcontext(&context);
+    }
+
+    if (argc != 2) {
+        exitWithError("Usage: ./raise <core-file>\n");
+    }
+
+    readCoreFile(argv[1]);
+
     return 0;
 }
