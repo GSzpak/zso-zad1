@@ -18,16 +18,6 @@ void exit_with_error(const char *reason)
     exit(EXIT_FAILURE);
 }
 
-void read_pt_load_section(Elf32_Phdr *program_header)
-{
-
-}
-
-void read_pt_note_section(Elf32_Phdr *program_header)
-{
-
-}
-
 void read_elf_header(FILE *core_file, Elf32_Ehdr *elf_header)
 {
     if (fread(elf_header, sizeof(Elf32_Ehdr), 1, core_file) != 1) {
@@ -38,13 +28,41 @@ void read_elf_header(FILE *core_file, Elf32_Ehdr *elf_header)
     }
 }
 
-void read_core_file(char *file_path)
+FILE *open_core_file(char *file_path)
 {
     FILE *core_file = fopen(file_path, "r");
     if (core_file == NULL) {
         exit_with_error("Error while opening core file\n");
     }
+    return core_file;
+}
 
+void read_pt_note_section(FILE *core_file, Elf32_Phdr *program_header)
+{
+
+}
+
+void read_pt_load_section(File *core_file, Elf32_Phdr *program_header)
+{
+    void *memory_adress = program_header->p_addr;
+    size_t memory_size = program_header->p_memsz;
+    if (memory_size % getpagesize() != 0) {
+        exit_with_error("No kurwa...\n");
+    }
+    int flags = program_header->p_flags;
+    void *allocated_memory = mmap(memory_adress, memory_size, flags,
+                                  MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    if (allocated_memory == MAP_FAILED) {
+        exit_with_error("Error in mmap\n");
+    }
+    fseek(core_file, program_header->p_offset, SEEK_SET);
+    fread(allocated_memory, memory_size, 1, core_file);
+}
+
+void read_core_file(char *file_path)
+{
+    FILE *core_file = open_core_file(file_path);
+    File *core_file_copy = open_core_file(file_path);
 
     Elf32_Ehdr elf_header;
     Elf32_Phdr program_header;
@@ -58,10 +76,10 @@ void read_core_file(char *file_path)
         }
         switch (program_header.p_type) {
             case PT_LOAD:
-                read_pt_load_section(&program_header);
+                read_pt_load_section(core_file_copy, &program_header);
                 break;
             case PT_NOTE:
-                read_pt_note_section(&program_header);
+                read_pt_note_section(core_file_copy, &program_header);
                 break;
             default:
                 break;
@@ -69,6 +87,7 @@ void read_core_file(char *file_path)
     }
 
     fclose(core_file);
+    fclose(core_file_copy);
 }
 
 int main(int argc, char *argv[])
