@@ -1,4 +1,4 @@
-TARGET: raise.out
+TARGET: raise.out test.out
 
 MMAP_MIN_ADDR_DEC = $(shell sysctl -n vm.mmap_min_addr)
 MMAP_MIN_ADDR_HEX = $(shell printf "%x" $(MMAP_MIN_ADDR_DEC))
@@ -18,6 +18,8 @@ raise.out: raise.o libc.a
 raise.o: raise.c
 	$(CC) $(CFLAGS) $^
 
+test.out: test.c
+	gcc -Wall -m32 -D_GNU_SOURCE $^ -o $@
 
 clean:
-	rm -f raise.out *.o *~ *.bak
+	rm -f *.out *.o *~ *.bak
