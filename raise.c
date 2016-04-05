@@ -1,9 +1,11 @@
 #include <elf.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <ucontext.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 
 const int STANDARD_LOAD_ADDRESS = 0x8048000;
@@ -18,9 +20,9 @@ void exit_with_error(const char *reason)
     exit(EXIT_FAILURE);
 }
 
-void read_elf_header(FILE *core_file, Elf32_Ehdr *elf_header)
+void read_elf_header(int core_file_descriptor, Elf32_Ehdr *elf_header)
 {
-    if (fread(elf_header, sizeof(Elf32_Ehdr), 1, core_file) != 1) {
+    if (read(core_file_descriptor, elf_header, sizeof(Elf32_Ehdr)) == -1) {
         exit_with_error("Error while reading ELF header\n");
     }
     if (elf_header->e_type != ET_CORE) {
@@ -28,66 +30,80 @@ void read_elf_header(FILE *core_file, Elf32_Ehdr *elf_header)
     }
 }
 
-FILE *open_core_file(char *file_path)
+int open_core_file(char *file_path)
 {
-    FILE *core_file = fopen(file_path, "r");
-    if (core_file == NULL) {
+    int core_file_descriptor = open(file_path, O_RDONLY);
+    if (core_file_descriptor == -1) {
         exit_with_error("Error while opening core file\n");
     }
-    return core_file;
+    return core_file_descriptor;
 }
 
-void read_pt_note_section(FILE *core_file, Elf32_Phdr *program_header)
+void print(const char *text)
 {
-
+    char buf[256] = {0x0};
+    int len = strlen(text);
+    strcpy(buf, text);
+    write(1, buf, len);
 }
 
-void read_pt_load_section(File *core_file, Elf32_Phdr *program_header)
+void read_pt_note_section(int core_file_descriptor, Elf32_Phdr *program_header)
 {
-    void *memory_adress = program_header->p_addr;
+    //print("Reading note section\n");
+}
+
+void read_pt_load_section(int core_file_descriptor, Elf32_Phdr *program_header)
+{
+    //print("Reading load section\n");
+    void *memory_adress = (void *) program_header->p_vaddr;
     size_t memory_size = program_header->p_memsz;
     if (memory_size % getpagesize() != 0) {
         exit_with_error("No kurwa...\n");
     }
     int flags = program_header->p_flags;
+    // TODO: add MAP_FIXED
     void *allocated_memory = mmap(memory_adress, memory_size, flags,
-                                  MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+                                  MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
+                                  -1, 0);
+    //printf("Requested: %p, received: %p\n", memory_adress, allocated_memory);
     if (allocated_memory == MAP_FAILED) {
         exit_with_error("Error in mmap\n");
     }
-    fseek(core_file, program_header->p_offset, SEEK_SET);
-    fread(allocated_memory, memory_size, 1, core_file);
+    lseek(core_file_descriptor, program_header->p_offset, SEEK_SET);
+    read(core_file_descriptor, allocated_memory, memory_size);
 }
 
 void read_core_file(char *file_path)
 {
-    FILE *core_file = open_core_file(file_path);
-    File *core_file_copy = open_core_file(file_path);
+    int core_file_descriptor_1 = open_core_file(file_path);
+    int core_file_descriptor_2 = open_core_file(file_path);
 
     Elf32_Ehdr elf_header;
     Elf32_Phdr program_header;
     unsigned int i;
 
-    read_elf_header(core_file, &elf_header);
+    read_elf_header(core_file_descriptor_1, &elf_header);
 
     for (i = 0; i < elf_header.e_phnum; ++i) {
-        if (fread(&program_header, sizeof(Elf32_Phdr), 1, core_file) != 1) {
+        int read_result = read(core_file_descriptor_1,
+                               &program_header, sizeof(Elf32_Phdr));
+        if (read_result == -1) {
             exit_with_error("Error while reading program header\n");
         }
         switch (program_header.p_type) {
             case PT_LOAD:
-                read_pt_load_section(core_file_copy, &program_header);
+                read_pt_load_section(core_file_descriptor_2, &program_header);
                 break;
             case PT_NOTE:
-                read_pt_note_section(core_file_copy, &program_header);
+                read_pt_note_section(core_file_descriptor_2, &program_header);
                 break;
             default:
                 break;
         }
     }
 
-    fclose(core_file);
-    fclose(core_file_copy);
+    close(core_file_descriptor_1);
+    close(core_file_descriptor_2);
 }
 
 int main(int argc, char *argv[])
@@ -97,9 +113,10 @@ int main(int argc, char *argv[])
         context_changed = 1;
         int stack_size = 2 * getpagesize();
         void *stack_bottom = (void *) (STACK_TOP_ADDRESS - stack_size);
-        mmap(stack_bottom, stack_size, PROT_READ | PROT_WRITE,
-             MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-        // TODO: check for error
+        if (mmap(stack_bottom, stack_size, PROT_READ | PROT_WRITE,
+             MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE, -1, 0) == MAP_FAILED) {
+            exit_with_error("Error in mmap\n");
+        }
         context.uc_mcontext.gregs[REG_ESP] = STACK_TOP_ADDRESS - 16;
         setcontext(&context);
     }
@@ -110,6 +127,6 @@ int main(int argc, char *argv[])
 
     read_core_file(argv[1]);
 
-    printf("OK!\n");
+    //print("OK!\n");
     return 0;
 }
