@@ -20,6 +20,8 @@ void exit_with_error(const char *reason)
     exit(EXIT_FAILURE);
 }
 
+
+
 void read_elf_header(int core_file_descriptor, Elf32_Ehdr *elf_header)
 {
     if (read(core_file_descriptor, elf_header, sizeof(Elf32_Ehdr)) == -1) {
@@ -47,14 +49,54 @@ void print(const char *text)
     write(1, buf, len);
 }
 
+void read_note_descriptor(int core_file_descriptor, size_t desc_size)
+{
+
+}
+
 void read_pt_note_section(int core_file_descriptor, Elf32_Phdr *program_header)
 {
-    //print("Reading note section\n");
+    print("Reading note section\n");
+    size_t name_size;
+    size_t desc_size;
+    int type;
+    char name_buf[256];
+
+    lseek(core_file_descriptor, program_header->p_offset, SEEK_SET);
+    off_t current_offset = 0;
+    size_t note_section_size = program_header->p_filesz;
+    while (current_offset < note_section_size) {
+        if (read(core_file_descriptor, &name_size, sizeof(name_size)) == -1) {
+            exit_with_error("Error while reading NOTE section\n");
+        }
+        current_offset += sizeof(name_size);
+        if (read(core_file_descriptor, &desc_size, sizeof(desc_size)) == -1) {
+            exit_with_error("Error while reading NOTE section\n");
+        }
+        current_offset += sizeof(desc_size);
+        if (read(core_file_descriptor, &type, sizeof(type)) == -1) {
+            exit_with_error("Error while reading NOTE section\n");
+        }
+        current_offset += sizeof(type);
+        if (name_size > 0) {
+            size_t name_size_to_read = name_size + (name_size % 4);
+            read(core_file_descriptor, name_buf, name_size_to_read);
+        }
+        if (desc_size > 0) {
+
+        }
+    }
+    off_t end_offset = program_header->p_offset + ;
+    off_t current_offset = lseek(core_file_descriptor, 0, SEEK_CUR);
 }
 
 void read_pt_load_section(int core_file_descriptor, Elf32_Phdr *program_header)
 {
     //print("Reading load section\n");
+    if (program_header->p_filesz == 0) {
+        // Read-only mapped file - read from PT_NOTE section
+        return;
+    }
     void *memory_adress = (void *) program_header->p_vaddr;
     size_t memory_size = program_header->p_memsz;
     if (memory_size % getpagesize() != 0) {
@@ -91,11 +133,11 @@ void read_core_file(char *file_path)
             exit_with_error("Error while reading program header\n");
         }
         switch (program_header.p_type) {
-            case PT_LOAD:
-                read_pt_load_section(core_file_descriptor_2, &program_header);
-                break;
             case PT_NOTE:
                 read_pt_note_section(core_file_descriptor_2, &program_header);
+                break;
+            case PT_LOAD:
+                read_pt_load_section(core_file_descriptor_2, &program_header);
                 break;
             default:
                 break;
