@@ -7,6 +7,7 @@
 #include <sys/procfs.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <assert.h>
 
 
 const int STANDARD_LOAD_ADDRESS = 0x8048000;
@@ -19,6 +20,19 @@ typedef struct {
     size_t desc_size;
     int type;
 } note_entry_header_t;
+
+typedef unsigned int addr_t;
+
+typedef struct {
+    int number_of_entries;
+    size_t page_size;
+} nt_file_header;
+
+typedef struct {
+    addr_t start;
+    addr_t end;
+    off_t file_offset;
+} nt_file_entry_header_t;
 
 
 void exit_with_error(const char *reason)
@@ -79,20 +93,24 @@ void read_descriptor_aligned_to_4(int core_file_descriptor,
     if (read(core_file_descriptor, buffer, descriptor_size) == -1) {
         exit_with_error("Error while reading NOTE section descriptor\n");
     }
-    size_t desc_size_aligned_to_4 = aligned_to_4(descriptor_size);
-    if (desc_size_aligned_to_4 > descriptor_size) {
-        lseek(core_file_descriptor, desc_size_aligned_to_4 - descriptor_size,
-              SEEK_CUR);
-    }
+
     *current_offset += desc_size_aligned_to_4;
+}
+
+void read_nt_file_section(int core_file_descriptor, off_t *current_offset)
+{
+    nt_file_header_t nt_file_header;
+    
 }
 
 void read_note_descriptor(int core_file_descriptor, off_t *current_offset,
                           note_entry_header_t *entry_header)
 {
+    off_t offset_before_reading_note_section = *current_offset;
     switch (entry_header->type) {
         case NT_FILE:
             print("NT_FILE found\n");
+            read_nt_file_section(core_file_descriptor, current_offset);
             break;
         case NT_PRSTATUS:
             print("NT_PRSTATUS found\n");
@@ -104,9 +122,16 @@ void read_note_descriptor(int core_file_descriptor, off_t *current_offset,
         default:
             break;
     }
-    char buffer[entry_header->desc_size];
-    read_descriptor_aligned_to_4(core_file_descriptor, current_offset,
-                                 (void *) buffer, entry_header->desc_size);
+    // TODO: remove
+    size_t nt_descriptor_size = *current_offset - offset_before_reading_note_section;
+    assert(nt_descriptor_size == entry_header->desc_size);
+    size_t descriptor_size = entry_header->desc_size;
+    size_t desc_size_aligned_to_4 = aligned_to_4(descriptor_size);
+    if (desc_size_aligned_to_4 > descriptor_size) {
+        off_t to_seek = desc_size_aligned_to_4 - descriptor_size
+        lseek(core_file_descriptor, to_seek, SEEK_CUR);
+        *current_offset += to_seek;
+    }
 }
 
 // TODO: Check for lseek error
