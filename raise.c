@@ -4,6 +4,7 @@
 #include <string.h>
 #include <ucontext.h>
 #include <sys/mman.h>
+#include <sys/procfs.h>
 #include <unistd.h>
 #include <fcntl.h>
 
@@ -12,6 +13,12 @@ const int STANDARD_LOAD_ADDRESS = 0x8048000;
 const int STACK_TOP_ADDRESS = 0x8000000;
 volatile int context_changed = 0;
 ucontext_t context;
+
+typedef struct {
+    size_t name_size;
+    size_t desc_size;
+    int type;
+} note_entry_header_t;
 
 
 void exit_with_error(const char *reason)
@@ -49,50 +56,86 @@ void print(const char *text)
     write(1, buf, len);
 }
 
-void read_note_descriptor(int core_file_descriptor, size_t desc_size)
-{
 
+
+unsigned int aligned_to_4(unsigned int val)
+{
+    unsigned int val_mod_4 = val % 4;
+    return val_mod_4 == 0 ? val : val + (4 - val_mod_4);
+}
+
+void skip_note_entry_name(int core_file_descriptor, size_t name_size,
+                          off_t *current_offset)
+{
+    off_t name_aligned_to_4_bytes = aligned_to_4(name_size);
+    lseek(core_file_descriptor, name_aligned_to_4_bytes, SEEK_CUR);
+    *current_offset += name_aligned_to_4_bytes;
+}
+
+void read_descriptor_aligned_to_4(int core_file_descriptor,
+                                  off_t *current_offset,
+                                  void *buffer, size_t descriptor_size)
+{
+    if (read(core_file_descriptor, buffer, descriptor_size) == -1) {
+        exit_with_error("Error while reading NOTE section descriptor\n");
+    }
+    size_t desc_size_aligned_to_4 = aligned_to_4(descriptor_size);
+    if (desc_size_aligned_to_4 > descriptor_size) {
+        lseek(core_file_descriptor, desc_size_aligned_to_4 - descriptor_size,
+              SEEK_CUR);
+    }
+    *current_offset += desc_size_aligned_to_4;
+}
+
+void read_note_descriptor(int core_file_descriptor, off_t *current_offset,
+                          note_entry_header_t *entry_header)
+{
+    switch (entry_header->type) {
+        case NT_FILE:
+            print("NT_FILE found\n");
+            break;
+        case NT_PRSTATUS:
+            print("NT_PRSTATUS found\n");
+            //struct elf_prstatus process_status;
+            break;
+        case NT_386_TLS:
+            print("NT_386_TLS found\n");
+            break;
+        default:
+            break;
+    }
+    char buffer[entry_header->desc_size];
+    read_descriptor_aligned_to_4(core_file_descriptor, current_offset,
+                                 (void *) buffer, entry_header->desc_size);
+}
+
+// TODO: Check for lseek error
+void read_note_entry(int core_file_descriptor, off_t *current_offset)
+{
+    note_entry_header_t entry_header;
+    if (read(core_file_descriptor, &entry_header, sizeof(entry_header)) == -1) {
+        exit_with_error("Error while reading NOTE entry\n");
+    }
+    *current_offset += sizeof(entry_header);
+    skip_note_entry_name(core_file_descriptor, entry_header.name_size,
+                         current_offset);
+    read_note_descriptor(core_file_descriptor, current_offset, &entry_header);
 }
 
 void read_pt_note_section(int core_file_descriptor, Elf32_Phdr *program_header)
 {
     print("Reading note section\n");
-    size_t name_size;
-    size_t desc_size;
-    int type;
-    char name_buf[256];
-
     lseek(core_file_descriptor, program_header->p_offset, SEEK_SET);
     off_t current_offset = 0;
     size_t note_section_size = program_header->p_filesz;
     while (current_offset < note_section_size) {
-        if (read(core_file_descriptor, &name_size, sizeof(name_size)) == -1) {
-            exit_with_error("Error while reading NOTE section\n");
-        }
-        current_offset += sizeof(name_size);
-        if (read(core_file_descriptor, &desc_size, sizeof(desc_size)) == -1) {
-            exit_with_error("Error while reading NOTE section\n");
-        }
-        current_offset += sizeof(desc_size);
-        if (read(core_file_descriptor, &type, sizeof(type)) == -1) {
-            exit_with_error("Error while reading NOTE section\n");
-        }
-        current_offset += sizeof(type);
-        if (name_size > 0) {
-            size_t name_size_to_read = name_size + (name_size % 4);
-            read(core_file_descriptor, name_buf, name_size_to_read);
-        }
-        if (desc_size > 0) {
-
-        }
+        read_note_entry(core_file_descriptor, &current_offset);
     }
-    off_t end_offset = program_header->p_offset + ;
-    off_t current_offset = lseek(core_file_descriptor, 0, SEEK_CUR);
 }
 
 void read_pt_load_section(int core_file_descriptor, Elf32_Phdr *program_header)
 {
-    //print("Reading load section\n");
+    print("Reading load section\n");
     if (program_header->p_filesz == 0) {
         // Read-only mapped file - read from PT_NOTE section
         return;
