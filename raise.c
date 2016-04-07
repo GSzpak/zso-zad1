@@ -10,7 +10,8 @@
 #include <assert.h>
 
 
-const int STANDARD_LOAD_ADDRESS = 0x8048000;
+#define MAX_CHAR_BUF_SIZE 256
+
 const int STACK_TOP_ADDRESS = 0x8000000;
 volatile int context_changed = 0;
 ucontext_t context;
@@ -21,12 +22,12 @@ typedef struct {
     int type;
 } note_entry_header_t;
 
-typedef unsigned int addr_t;
-
 typedef struct {
     int number_of_entries;
     size_t page_size;
-} nt_file_header;
+} nt_file_header_t;
+
+typedef unsigned int addr_t;
 
 typedef struct {
     addr_t start;
@@ -64,13 +65,11 @@ int open_core_file(char *file_path)
 
 void print(const char *text)
 {
-    char buf[256] = {0x0};
+    char buf[MAX_CHAR_BUF_SIZE] = {0x0};
     int len = strlen(text);
     strcpy(buf, text);
     write(1, buf, len);
 }
-
-
 
 unsigned int aligned_to_4(unsigned int val)
 {
@@ -86,41 +85,65 @@ void skip_note_entry_name(int core_file_descriptor, size_t name_size,
     *current_offset += name_aligned_to_4_bytes;
 }
 
-void read_descriptor_aligned_to_4(int core_file_descriptor,
-                                  off_t *current_offset,
-                                  void *buffer, size_t descriptor_size)
+size_t read_file_name(int file_descriptor, char *buffer)
 {
-    if (read(core_file_descriptor, buffer, descriptor_size) == -1) {
-        exit_with_error("Error while reading NOTE section descriptor\n");
+    // Assumes, that buffer is big enough to fit the whole name
+    size_t current_char_pos = 0;
+    if (read(file_descriptor, buffer, sizeof(char)) == -1) {
+        exit_with_error("Error while reading file name\n");
     }
-
-    *current_offset += desc_size_aligned_to_4;
+    while (buffer[current_char_pos] != '\0') {
+        ++current_char_pos;
+        if (read(file_descriptor, buffer + current_char_pos, sizeof(char)) == -1) {
+            exit_with_error("Error while reading file name\n");
+        }
+    }
+    return current_char_pos;
 }
 
-void skip_file_names_in_nt_file(int core_file_descriptor, off_t *current_offset)
+void map_file(int core_file_descriptor, off_t *current_offset,
+               nt_file_header_t *nt_file_header, nt_file_entry_t *nt_file_entry)
 {
-
-}
-
-void read_nt_file_section_entry(int core_file_descriptor, off_t *current_offset)
-{
-    nt_file_entry_t nt_file_entry;
-    if (read(core_file_descriptor, &nt_file_entry, sizeof(nt_file_entry)) == -1) {
-        exit_with_error("Error while reading NT_FILE entry\n");
+    char file_name[MAX_CHAR_BUF_SIZE];
+    size_t name_length = read_file_name(core_file_descriptor, file_name);
+    // Add one for trailing '\0' character
+    *current_offset += (name_length + 1);
+    int file_descriptor = open(file_name, O_RDONLY);
+    if (file_descriptor == -1) {
+        exit_with_error("Error while opening file\n");
     }
-    *current_offset += sizeof(nt_file_entry);
-    void *memory_adress = (void *) nt_file_entry.start;
-    size_t memory_size = nt_file_entry.end - nt_file_entry.start;
-    if (memory_size % getpagesize() != 0) {
-        exit_with_error("No kurwa...\n");
-    }
-    // TODO: flags?
-    void *allocated_memory = mmap(memory_adress, memory_size, 0,
-                                  MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
-                                  -1, 0);
-    //printf("Requested: %p, received: %p\n", memory_adress, allocated_memory);
-    if (allocated_memory == MAP_FAILED) {
+    // TODO: make checked_ versions of stdlib functions
+    // TODO: set flags properly
+    size_t mapped_area_size = nt_file_entry->end - nt_file_entry->start;
+    off_t offset = nt_file_entry->file_offset * nt_file_header->page_size;
+    void *mapped_area = mmap((void *) nt_file_entry->start, mapped_area_size,
+                             PROT_READ | PROT_WRITE | PROT_EXEC,
+                             MAP_FIXED | MAP_PRIVATE, file_descriptor, offset);
+    if (mapped_area == MAP_FAILED) {
         exit_with_error("Error in mmap\n");
+    }
+    close(file_descriptor);
+}
+
+void read_nt_file_section_entries(int core_file_descriptor,
+                                  off_t *current_offset,
+                                  nt_file_header_t *nt_file_header,
+                                  nt_file_entry_t *nt_file_entries)
+{
+    int num_of_entries = nt_file_header->number_of_entries;
+    for (int i = 0; i < num_of_entries; ++i) {
+        int read_result = read(core_file_descriptor, nt_file_entries + i,
+                               sizeof(nt_file_entry_t));
+        if (read_result == -1) {
+            exit_with_error("Error while reading NT_FILE entry\n");
+        }
+        printf("Start: %p, end: %p\n", (void *) (nt_file_entries + i)->start,
+               (void *) (nt_file_entries + i)->end);
+        *current_offset += sizeof(nt_file_entry_t);
+    }
+    for (int i = 0; i < num_of_entries; ++i) {
+        map_file(core_file_descriptor, current_offset,
+                 nt_file_header, nt_file_entries + i);
     }
 }
 
@@ -128,21 +151,23 @@ void read_nt_file_section(int core_file_descriptor, off_t *current_offset)
 {
     nt_file_header_t nt_file_header;
 
-
     if (read(core_file_descriptor, &nt_file_header, sizeof(nt_file_header)) == -1) {
         exit_with_error("Error while reading NT_FILE section header\n");
     }
     *current_offset += sizeof(nt_file_header);
     //TODO: remove
     assert(nt_file_header.page_size = getpagesize());
-    for (int i = 0; i < nt_file_header.number_of_entries; ++i) {
+    nt_file_entry_t nt_file_entries[nt_file_header.number_of_entries];
 
-    }
+    read_nt_file_section_entries(core_file_descriptor, current_offset,
+                                 &nt_file_header, nt_file_entries);
 }
 
-void read_note_descriptor(int core_file_descriptor, off_t *current_offset,
-                          note_entry_header_t *entry_header)
+void read_note_entry_descriptor(int core_file_descriptor, off_t *current_offset,
+                                note_entry_header_t *entry_header)
 {
+    struct elf_prstatus process_status;
+    printf("%p\n", (void *) *current_offset);
     off_t offset_before_reading_note_section = *current_offset;
     switch (entry_header->type) {
         case NT_FILE:
@@ -151,22 +176,31 @@ void read_note_descriptor(int core_file_descriptor, off_t *current_offset,
             break;
         case NT_PRSTATUS:
             print("NT_PRSTATUS found\n");
-            //struct elf_prstatus process_status;
+            int read_result = read(core_file_descriptor, &process_status,
+                                   sizeof(process_status));
+            if (read_result == -1) {
+                exit_with_error("Error while reading NT_PRSTATUS section\n");
+            }
+            *current_offset += sizeof(process_status);
+            printf("%p\n", (void *) *current_offset);
             break;
         case NT_386_TLS:
             print("NT_386_TLS found\n");
             break;
         default:
+            lseek(core_file_descriptor, entry_header->desc_size, SEEK_CUR);
+            *current_offset += entry_header->desc_size;
             break;
     }
     // TODO: remove
+    printf("%p\n", (void *) *current_offset);
     size_t nt_descriptor_size = *current_offset - offset_before_reading_note_section;
     assert(nt_descriptor_size == entry_header->desc_size);
 
     size_t descriptor_size = entry_header->desc_size;
     size_t desc_size_aligned_to_4 = aligned_to_4(descriptor_size);
     if (desc_size_aligned_to_4 > descriptor_size) {
-        off_t to_seek = desc_size_aligned_to_4 - descriptor_size
+        off_t to_seek = desc_size_aligned_to_4 - descriptor_size;
         lseek(core_file_descriptor, to_seek, SEEK_CUR);
         *current_offset += to_seek;
     }
@@ -182,7 +216,7 @@ void read_note_entry(int core_file_descriptor, off_t *current_offset)
     *current_offset += sizeof(entry_header);
     skip_note_entry_name(core_file_descriptor, entry_header.name_size,
                          current_offset);
-    read_note_descriptor(core_file_descriptor, current_offset, &entry_header);
+    read_note_entry_descriptor(core_file_descriptor, current_offset, &entry_header);
 }
 
 void read_pt_note_segment(int core_file_descriptor, Elf32_Phdr *program_header)
@@ -208,11 +242,9 @@ void read_pt_load_segment(int core_file_descriptor, Elf32_Phdr *program_header)
     if (memory_size % getpagesize() != 0) {
         exit_with_error("No kurwa...\n");
     }
-    int flags = program_header->p_flags;
-    // TODO: add MAP_FIXED
-    void *allocated_memory = mmap(memory_adress, memory_size, flags,
-                                  MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
-                                  -1, 0);
+    int prot = program_header->p_flags;
+    int flags = MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE;
+    void *allocated_memory = mmap(memory_adress, memory_size, prot, flags, -1, 0);
     //printf("Requested: %p, received: %p\n", memory_adress, allocated_memory);
     if (allocated_memory == MAP_FAILED) {
         exit_with_error("Error in mmap\n");
@@ -240,10 +272,10 @@ void read_core_file(char *file_path)
         }
         switch (program_header.p_type) {
             case PT_NOTE:
-                read_pt_note_section(core_file_descriptor_2, &program_header);
+                read_pt_note_segment(core_file_descriptor_2, &program_header);
                 break;
             case PT_LOAD:
-                read_pt_load_section(core_file_descriptor_2, &program_header);
+                read_pt_load_segment(core_file_descriptor_2, &program_header);
                 break;
             default:
                 break;
@@ -261,8 +293,10 @@ int main(int argc, char *argv[])
         context_changed = 1;
         int stack_size = 2 * getpagesize();
         void *stack_bottom = (void *) (STACK_TOP_ADDRESS - stack_size);
-        if (mmap(stack_bottom, stack_size, PROT_READ | PROT_WRITE,
-             MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE, -1, 0) == MAP_FAILED) {
+        void *stack_area = mmap(stack_bottom, stack_size, PROT_READ | PROT_WRITE,
+                                MAP_GROWSDOWN | MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
+                                -1, 0);
+        if (stack_area == MAP_FAILED) {
             exit_with_error("Error in mmap\n");
         }
         context.uc_mcontext.gregs[REG_ESP] = STACK_TOP_ADDRESS - 16;
