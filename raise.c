@@ -32,7 +32,7 @@ typedef struct {
     addr_t start;
     addr_t end;
     off_t file_offset;
-} nt_file_entry_header_t;
+} nt_file_entry_t;
 
 
 void exit_with_error(const char *reason)
@@ -97,10 +97,47 @@ void read_descriptor_aligned_to_4(int core_file_descriptor,
     *current_offset += desc_size_aligned_to_4;
 }
 
+void skip_file_names_in_nt_file(int core_file_descriptor, off_t *current_offset)
+{
+
+}
+
+void read_nt_file_section_entry(int core_file_descriptor, off_t *current_offset)
+{
+    nt_file_entry_t nt_file_entry;
+    if (read(core_file_descriptor, &nt_file_entry, sizeof(nt_file_entry)) == -1) {
+        exit_with_error("Error while reading NT_FILE entry\n");
+    }
+    *current_offset += sizeof(nt_file_entry);
+    void *memory_adress = (void *) nt_file_entry.start;
+    size_t memory_size = nt_file_entry.end - nt_file_entry.start;
+    if (memory_size % getpagesize() != 0) {
+        exit_with_error("No kurwa...\n");
+    }
+    // TODO: flags?
+    void *allocated_memory = mmap(memory_adress, memory_size, 0,
+                                  MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
+                                  -1, 0);
+    //printf("Requested: %p, received: %p\n", memory_adress, allocated_memory);
+    if (allocated_memory == MAP_FAILED) {
+        exit_with_error("Error in mmap\n");
+    }
+}
+
 void read_nt_file_section(int core_file_descriptor, off_t *current_offset)
 {
     nt_file_header_t nt_file_header;
-    
+
+
+    if (read(core_file_descriptor, &nt_file_header, sizeof(nt_file_header)) == -1) {
+        exit_with_error("Error while reading NT_FILE section header\n");
+    }
+    *current_offset += sizeof(nt_file_header);
+    //TODO: remove
+    assert(nt_file_header.page_size = getpagesize());
+    for (int i = 0; i < nt_file_header.number_of_entries; ++i) {
+
+    }
 }
 
 void read_note_descriptor(int core_file_descriptor, off_t *current_offset,
@@ -125,6 +162,7 @@ void read_note_descriptor(int core_file_descriptor, off_t *current_offset,
     // TODO: remove
     size_t nt_descriptor_size = *current_offset - offset_before_reading_note_section;
     assert(nt_descriptor_size == entry_header->desc_size);
+
     size_t descriptor_size = entry_header->desc_size;
     size_t desc_size_aligned_to_4 = aligned_to_4(descriptor_size);
     if (desc_size_aligned_to_4 > descriptor_size) {
@@ -147,7 +185,7 @@ void read_note_entry(int core_file_descriptor, off_t *current_offset)
     read_note_descriptor(core_file_descriptor, current_offset, &entry_header);
 }
 
-void read_pt_note_section(int core_file_descriptor, Elf32_Phdr *program_header)
+void read_pt_note_segment(int core_file_descriptor, Elf32_Phdr *program_header)
 {
     print("Reading note section\n");
     lseek(core_file_descriptor, program_header->p_offset, SEEK_SET);
@@ -158,7 +196,7 @@ void read_pt_note_section(int core_file_descriptor, Elf32_Phdr *program_header)
     }
 }
 
-void read_pt_load_section(int core_file_descriptor, Elf32_Phdr *program_header)
+void read_pt_load_segment(int core_file_descriptor, Elf32_Phdr *program_header)
 {
     print("Reading load section\n");
     if (program_header->p_filesz == 0) {
