@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <assert.h>
 #include <stdbool.h>
+#include <asm/ldt.h>
 
 
 #define MAX_CHAR_BUF_SIZE 80
@@ -51,6 +52,7 @@ typedef struct {
     struct elf_prstatus process_status;
     bool nt_prstatus_found;
     nt_file_info_t nt_file_info;
+    struct user_desc *user_info;
     bool nt_386_tls_found;
 } pt_note_info_t;
 
@@ -173,7 +175,7 @@ void read_nt_file_section(int core_file_descriptor, off_t *current_offset,
 }
 
 void read_nt_prstatus_section(int core_file_descriptor, off_t *current_offset,
-                              pt_note_info_t * pt_note_info)
+                              pt_note_info_t *pt_note_info)
 {
     int read_result = read(core_file_descriptor, &pt_note_info->process_status,
                            sizeof(struct elf_prstatus));
@@ -182,6 +184,19 @@ void read_nt_prstatus_section(int core_file_descriptor, off_t *current_offset,
     }
     *current_offset += sizeof(struct elf_prstatus);
     pt_note_info->nt_prstatus_found = true;
+}
+
+void read_nt_386_tls_section(int core_file_descriptor, off_t *current_offset,
+                             pt_note_info_t *pt_note_info)
+{
+    int read_result = read(core_file_descriptor, &pt_note_info->user_info,
+                           sizeof(struct user_desc));
+    if (read_result == -1) {
+        exit_with_error("Error while reading NT_386_TLS section\n");
+    }
+    // TODO: check on i386
+    //*current_offset += sizeof(struct user_desc);
+    pt_note_info->nt_386_tls_found = true;
 }
 
 void read_note_entry_descriptor(int core_file_descriptor, off_t *current_offset,
@@ -202,9 +217,10 @@ void read_note_entry_descriptor(int core_file_descriptor, off_t *current_offset,
                                      pt_note_info);
             break;
         case NT_386_TLS:
-            // TODO
             //print("NT_386_TLS found\n");
-            pt_note_info->nt_386_tls_found = true;
+            read_nt_386_tls_section(core_file_descriptor, current_offset,
+                                    pt_note_info);
+            // TODO: check on i386
             lseek(core_file_descriptor, entry_header->desc_size, SEEK_CUR);
             *current_offset += entry_header->desc_size;
             break;
@@ -241,8 +257,6 @@ void read_note_entry(int core_file_descriptor, off_t *current_offset,
     read_note_entry_descriptor(core_file_descriptor, current_offset,
                                pt_note_info, &entry_header);
 }
-
-
 
 void read_pt_note_segment(int core_file_descriptor, Elf32_Phdr *program_header,
                           pt_note_info_t *pt_note_info)
@@ -379,7 +393,7 @@ int main(int argc, char *argv[])
     if (argc != 2) {
         exit_with_error("Usage: ./raise <core-file>\n");
     }
-
+    // TODO: sizeofs
     getcontext(&context);
     context.uc_stack.ss_sp = mmap(
             (void *) (STACK_TOP_ADDRESS - INITIAL_STACK_SIZE_IN_PAGES * getpagesize()),
