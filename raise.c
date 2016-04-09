@@ -383,6 +383,12 @@ void read_core_file(char *file_path)
         }
         lseek(core_file_descriptor, current_offset, SEEK_SET);
     }
+    if (!pt_note_info.nt_prstatus_found) {
+        exit_with_error("NT_PRSTATUS section not found in core file\n");
+    }
+    if (!pt_note_info.nt_386_tls_found) {
+        exit_with_error("NT_386_TLS section not found in core file\n");
+    }
 
     close(core_file_descriptor);
     //print("OK!\n");
