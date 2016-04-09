@@ -329,9 +329,7 @@ void read_pt_load_segment(int core_file_descriptor, Elf32_Phdr *pt_load_header,
 
 void read_core_file(char *file_path)
 {
-    int core_file_descriptor_1 = open_core_file(file_path);
-    // TODO: open only one fd
-    int core_file_descriptor_2 = open_core_file(file_path);
+    int core_file_descriptor = open_core_file(file_path);
 
     Elf32_Ehdr elf_header;
     Elf32_Phdr program_header;
@@ -340,20 +338,22 @@ void read_core_file(char *file_path)
             .nt_386_tls_found = false,
             .nt_file_info.header.number_of_entries = 0
         };
+    int read_result;
+    off_t current_offset;
     bool pt_note_successfully_read = false;
 
-    read_and_check_elf_header(core_file_descriptor_1, &elf_header);
+    read_and_check_elf_header(core_file_descriptor, &elf_header);
 
     for (int i = 0; i < elf_header.e_phnum; ++i) {
-        int read_result = read(core_file_descriptor_1,
-                               &program_header, sizeof(Elf32_Phdr));
+        read_result = read(core_file_descriptor,
+                           &program_header, sizeof(Elf32_Phdr));
         if (read_result == -1) {
             exit_with_error("Error while reading program header\n");
         }
+        current_offset = lseek(core_file_descriptor, 0, SEEK_CUR);
         switch (program_header.p_type) {
             case PT_NOTE:
-                // TODO: add TLS
-                read_pt_note_segment(core_file_descriptor_2, &program_header,
+                read_pt_note_segment(core_file_descriptor, &program_header,
                                      &pt_note_info);
                 pt_note_successfully_read = true;
                 break;
@@ -361,16 +361,16 @@ void read_core_file(char *file_path)
                 if (!pt_note_successfully_read) {
                     exit_with_error("PT_LOAD occured before PT_NOTE\n");
                 }
-                read_pt_load_segment(core_file_descriptor_2, &program_header,
+                read_pt_load_segment(core_file_descriptor, &program_header,
                                      &pt_note_info.nt_file_info);
                 break;
             default:
                 break;
         }
+        lseek(core_file_descriptor, current_offset, SEEK_SET);
     }
 
-    close(core_file_descriptor_1);
-    close(core_file_descriptor_2);
+    close(core_file_descriptor);
     //print("OK!\n");
 }
 
