@@ -10,11 +10,15 @@
 #include <assert.h>
 
 
-#define MAX_CHAR_BUF_SIZE 256
+#define MAX_CHAR_BUF_SIZE 80
+#define MAX_NT_FILE_ENTRIES_NUM 100
+#define STACK_TOP_ADDRESS 0x8000000
+#define INITIAL_STACK_SIZE_IN_PAGES 33
 
-const int STACK_TOP_ADDRESS = 0x8000000;
+
 volatile int context_changed = 0;
 ucontext_t context;
+
 
 typedef struct {
     size_t name_size;
@@ -35,7 +39,12 @@ typedef struct {
     off_t file_offset;
 } nt_file_entry_t;
 
-
+/*
+typedef struct {
+    nt_file_entry_header_t header;
+    char file_name[80];
+};
+*/
 void exit_with_error(const char *reason)
 {
     fprintf(stderr, "%s", reason);
@@ -291,7 +300,7 @@ int main(int argc, char *argv[])
     getcontext(&context);
     if (!context_changed) {
         context_changed = 1;
-        int stack_size = 2 * getpagesize();
+        int stack_size = INITIAL_STACK_SIZE_IN_PAGES * getpagesize();
         void *stack_bottom = (void *) (STACK_TOP_ADDRESS - stack_size);
         void *stack_area = mmap(stack_bottom, stack_size, PROT_READ | PROT_WRITE,
                                 MAP_GROWSDOWN | MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
@@ -302,7 +311,6 @@ int main(int argc, char *argv[])
         context.uc_mcontext.gregs[REG_ESP] = STACK_TOP_ADDRESS - 16;
         setcontext(&context);
     }
-
     if (argc != 2) {
         exit_with_error("Usage: ./raise <core-file>\n");
     }
