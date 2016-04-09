@@ -66,14 +66,25 @@ void exit_with_error(const char *reason)
 
 
 
-void read_elf_header(int core_file_descriptor, Elf32_Ehdr *elf_header)
+void read_and_check_elf_header(int core_file_descriptor, Elf32_Ehdr *elf_header)
 {
+    print("Checking file\n");
     if (read(core_file_descriptor, elf_header, sizeof(Elf32_Ehdr)) == -1) {
         exit_with_error("Error while reading ELF header\n");
+    }
+    if (elf_header->e_ident[EI_MAG0] != ELFMAG0 ||
+            elf_header->e_ident[EI_MAG1] != ELFMAG1 ||
+            elf_header->e_ident[EI_MAG2] != ELFMAG2 ||
+            elf_header->e_ident[EI_MAG3] != ELFMAG3) {
+        exit_with_error("Error: not an ELF file\n");
+    }
+    if (elf_header->e_machine != EM_386) {
+        exit_with_error("Error: architecture different than Intel 80386\n");
     }
     if (elf_header->e_type != ET_CORE) {
         exit_with_error("Error: not a CORE file\n");
     }
+    print("Core file OK!\n");
 }
 
 int open_core_file(char *file_path)
@@ -311,7 +322,7 @@ void read_core_file(char *file_path)
         };
     bool pt_note_successfully_read = false;
 
-    read_elf_header(core_file_descriptor_1, &elf_header);
+    read_and_check_elf_header(core_file_descriptor_1, &elf_header);
 
     for (int i = 0; i < elf_header.e_phnum; ++i) {
         int read_result = read(core_file_descriptor_1,
