@@ -17,9 +17,6 @@
 #define INITIAL_STACK_SIZE_IN_PAGES 33
 
 
-volatile int context_changed = 0;
-ucontext_t context;
-
 
 typedef struct {
     size_t name_size;
@@ -64,7 +61,7 @@ void exit_with_error(const char *reason)
     exit(EXIT_FAILURE);
 }
 
-
+static ucontext_t context;
 
 void read_and_check_elf_header(int core_file_descriptor, Elf32_Ehdr *elf_header)
 {
@@ -118,7 +115,7 @@ void skip_note_entry_name(int core_file_descriptor, size_t name_size,
     *current_offset += name_aligned_to_4_bytes;
 }
 
-size_t read_file_name(int file_descriptor, char *buffer)
+size_t read_c_string(int file_descriptor, char *buffer)
 {
     // Assumes, that buffer is big enough to fit the whole name
     size_t current_char_pos = 0;
@@ -152,8 +149,8 @@ void read_nt_file_section_entries(int core_file_descriptor,
         *current_offset += sizeof(nt_file_entry_header_t);
     }
     for (int i = 0; i < num_of_entries; ++i) {
-        size_t name_length = read_file_name(core_file_descriptor,
-                                            (nt_file_entries + i)->file_path);
+        size_t name_length = read_c_string(core_file_descriptor,
+                                           (nt_file_entries + i)->file_path);
         // Add one for trailing '\0' character
         *current_offset += (name_length + 1);
     }
@@ -194,6 +191,7 @@ void read_note_entry_descriptor(int core_file_descriptor, off_t *current_offset,
     off_t offset_before_reading_note_section = *current_offset;
     switch (entry_header->type) {
         case NT_FILE:
+            //print("NT_FILE found\n");
             //printf("NT_FILE size: %p\n", entry_header->desc_size);
             read_nt_file_section(core_file_descriptor, current_offset,
                                  &pt_note_info->nt_file_info);
@@ -273,7 +271,7 @@ void map_files_in_interval(nt_file_info_t *nt_file_info,
         if (current_file_info->start >= start_addr &&
                 current_file_info->start < end_addr) {
             //printf("\t%p, %p\n", current_file_info->start, current_file_info->end);
-            puts((file_entries + i)->file_path);
+            //puts((file_entries + i)->file_path);
             assert(current_file_info->end <= end_addr);
             int file_descriptor = open((file_entries + i)->file_path, O_RDONLY);
             if (file_descriptor == -1) {
@@ -373,30 +371,29 @@ void read_core_file(char *file_path)
 
     close(core_file_descriptor_1);
     close(core_file_descriptor_2);
+    //print("OK!\n");
 }
 
 int main(int argc, char *argv[])
 {
-    getcontext(&context);
-    if (!context_changed) {
-        context_changed = 1;
-        int stack_size = INITIAL_STACK_SIZE_IN_PAGES * getpagesize();
-        void *stack_bottom = (void *) (STACK_TOP_ADDRESS - stack_size);
-        void *stack_area = mmap(stack_bottom, stack_size, PROT_READ | PROT_WRITE,
-                                MAP_GROWSDOWN | MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
-                                -1, 0);
-        if (stack_area == MAP_FAILED) {
-            exit_with_error("Error in mmap\n");
-        }
-        context.uc_mcontext.gregs[REG_ESP] = STACK_TOP_ADDRESS - 16;
-        setcontext(&context);
-    }
     if (argc != 2) {
         exit_with_error("Usage: ./raise <core-file>\n");
     }
 
-    read_core_file(argv[1]);
+    getcontext(&context);
+    context.uc_stack.ss_sp = mmap(
+            (void *) (STACK_TOP_ADDRESS - INITIAL_STACK_SIZE_IN_PAGES * getpagesize()),
+            INITIAL_STACK_SIZE_IN_PAGES * getpagesize(),
+            PROT_READ | PROT_WRITE,
+            MAP_GROWSDOWN | MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
+            -1, 0);
+    if (context.uc_stack.ss_sp == MAP_FAILED) {
+        exit_with_error("Error in mmap\n");
+    }
+    context.uc_stack.ss_size = INITIAL_STACK_SIZE_IN_PAGES * getpagesize();
+    context.uc_link = NULL;
+    makecontext(&context, (void (*)()) read_core_file, 1, argv[1]);
+    setcontext(&context);
 
-    print("OK!\n");
     return 0;
 }
