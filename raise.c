@@ -54,7 +54,7 @@ typedef struct {
     struct elf_prstatus process_status;
     bool nt_prstatus_found;
     nt_file_info_t nt_file_info;
-    struct user_desc *user_info;
+    struct user_desc user_info;
     bool nt_386_tls_found;
 } pt_note_info_t;
 
@@ -217,7 +217,7 @@ void read_nt_386_tls_section(int core_file_descriptor, off_t *current_offset,
         exit_with_error("Error while reading NT_386_TLS section\n");
     }
     // TODO: check on i386
-    //*current_offset += sizeof(struct user_desc);
+    *current_offset += sizeof(struct user_desc);
     pt_note_info->nt_386_tls_found = true;
 }
 
@@ -240,11 +240,13 @@ void read_note_entry_descriptor(int core_file_descriptor, off_t *current_offset,
             break;
         case NT_386_TLS:
             //print("NT_386_TLS found\n");
+            // TODO: fix
             read_nt_386_tls_section(core_file_descriptor, current_offset,
                                     pt_note_info);
-            // TODO: check on i386
-            lseek(core_file_descriptor, entry_header->desc_size, SEEK_CUR);
-            *current_offset += entry_header->desc_size;
+            lseek(core_file_descriptor,
+                  entry_header->desc_size - sizeof(struct user_desc),
+                  SEEK_CUR);
+            *current_offset += (entry_header->desc_size - sizeof(struct user_desc));
             break;
         default:
             lseek(core_file_descriptor, entry_header->desc_size, SEEK_CUR);
@@ -482,6 +484,7 @@ int main(int argc, char *argv[])
     if (argc != 2) {
         exit_with_error("Usage: ./raise <core-file>\n");
     }
+
     // TODO: sizeofs
     getcontext(&context);
     context.uc_stack.ss_sp = mmap(
