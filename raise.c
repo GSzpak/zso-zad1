@@ -10,6 +10,8 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <asm/ldt.h>
+#include <sys/syscall.h>
+#include <sys/user.h>
 
 
 #define MAX_CHAR_BUF_SIZE 80
@@ -341,6 +343,26 @@ void read_pt_load_segment(int core_file_descriptor, Elf32_Phdr *pt_load_header,
     read(core_file_descriptor, allocated_memory, memory_size);
 }
 
+void set_register_values_and_change_context(struct user_regs_struct *user_regs)
+{
+    /*
+    getcontext(&context);
+    //printf("%p\n", context.uc_mcontext.gregs[REG_EBX]);
+    //printf("%p\n", context.uc_mcontext.gregs[REG_EBX]);
+    context.uc_mcontext.gregs[REG_EAX] = user_regs->eax;
+    context.uc_mcontext.gregs[REG_ECX] = user_regs->ecx;
+    context.uc_mcontext.gregs[REG_EDX] = user_regs->edx;
+    context.uc_mcontext.gregs[REG_EBX] = user_regs->ebx;
+    context.uc_mcontext.gregs[REG_ESP] = user_regs->esp;
+    context.uc_mcontext.gregs[REG_EBP] = user_regs->ebp;
+    context.uc_mcontext.gregs[REG_ESI] = user_regs->esi;
+    context.uc_mcontext.gregs[REG_EDI] = user_regs->edi;
+    context.uc_mcontext.gregs[REG_EIP] = user_regs->eip;
+    context.uc_mcontext.gregs[REG_EFL] = user_regs->eflags;
+    setcontext(&context);
+     */
+}
+
 void read_core_file(char *file_path)
 {
     int core_file_descriptor = open_core_file(file_path);
@@ -383,14 +405,28 @@ void read_core_file(char *file_path)
         }
         lseek(core_file_descriptor, current_offset, SEEK_SET);
     }
+
+    close(core_file_descriptor);
+
     if (!pt_note_info.nt_prstatus_found) {
         exit_with_error("NT_PRSTATUS section not found in core file\n");
     }
     if (!pt_note_info.nt_386_tls_found) {
         exit_with_error("NT_386_TLS section not found in core file\n");
     }
+    if (syscall(SYS_set_thread_area, &pt_note_info.user_info) == -1) {
+        exit_with_error("Error while calling set_thread_area\n");
+    }
 
-    close(core_file_descriptor);
+    // TODO: small refactor
+    assert(sizeof(struct user_regs_struct) == sizeof(pt_note_info.process_status.pr_reg));
+    struct user_regs_struct user_regs;
+    // TODO: check result
+    memcpy(&user_regs, pt_note_info.process_status.pr_reg,
+           sizeof(struct user_regs_struct));
+    //printf("%p %p\n", user_regs.ebx, pt_note_info.process_status.pr_reg[0]);
+    set_register_values_and_change_context(&user_regs);
+
     //print("OK!\n");
 }
 
