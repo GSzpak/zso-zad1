@@ -3,3 +3,6 @@ lldb/
 core
 *.out
 *.o
+z1_test/
+raise
+test
