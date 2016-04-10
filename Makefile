@@ -20,7 +20,7 @@ raise.o: raise.c
 	$(CC) $(CFLAGS) $^
 
 test.out: test.c
-	gcc -Wall -m32 -D_GNU_SOURCE $^ -o $@
+	gcc -Wall -m32 -g -D_GNU_SOURCE $^ -o $@
 
 clean:
 	rm -f *.out *.o *~ *.bak

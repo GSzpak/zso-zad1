@@ -18,7 +18,7 @@
 #define MAX_NT_FILE_ENTRIES_NUM 1000
 #define STACK_TOP_ADDRESS 0x8000000
 #define INITIAL_STACK_SIZE_IN_PAGES 33
-
+#define SET_REGISTERS_CODE_ADDRESS 0x8001000
 
 
 typedef struct {
@@ -59,13 +59,33 @@ typedef struct {
 } pt_note_info_t;
 
 
+unsigned char set_registers_template[] = {
+    0xb8, 0x0, 0x0, 0x0, 0x0,       // mov eax,<val>
+    0xb9, 0x0, 0x0, 0x0, 0x0,       // mov ecx,<val>
+    0xba, 0x0, 0x0, 0x0, 0x0,       // mov edx,<val>
+    0xbb, 0x0, 0x0, 0x0, 0x0,       // mov ebx,<val>
+    0xbc, 0x0, 0x0, 0x0, 0x0,       // mov esp,<val>
+    0xbd, 0x0, 0x0, 0x0, 0x0,       // mov ebp,<val>
+    0xbe, 0x0, 0x0, 0x0, 0x0,       // mov esi,<val>
+    0xbf, 0x0, 0x0, 0x0, 0x0,       // mov edi,<val>
+    0x68, 0x0, 0x0, 0x0, 0x0,       // push <val>
+    0x9d,                           // popf
+    0x68, 0x0, 0x0, 0x0, 0x0,       // push <val>
+    0xc3                            // ret
+    // push <val>; ret is equivalent to jmp <val>
+};
+
+
+static ucontext_t context;
+
+
 void exit_with_error(const char *reason)
 {
     fprintf(stderr, "%s", reason);
     exit(EXIT_FAILURE);
 }
 
-static ucontext_t context;
+
 
 void read_and_check_elf_header(int core_file_descriptor, Elf32_Ehdr *elf_header)
 {
@@ -343,25 +363,56 @@ void read_pt_load_segment(int core_file_descriptor, Elf32_Phdr *pt_load_header,
     read(core_file_descriptor, allocated_memory, memory_size);
 }
 
-void set_register_values_and_change_context(struct user_regs_struct *user_regs)
+
+void copy_register_val(long int *reg, void *base_address, off_t offset)
 {
-    /*
-    getcontext(&context);
-    //printf("%p\n", context.uc_mcontext.gregs[REG_EBX]);
-    //printf("%p\n", context.uc_mcontext.gregs[REG_EBX]);
-    context.uc_mcontext.gregs[REG_EAX] = user_regs->eax;
-    context.uc_mcontext.gregs[REG_ECX] = user_regs->ecx;
-    context.uc_mcontext.gregs[REG_EDX] = user_regs->edx;
-    context.uc_mcontext.gregs[REG_EBX] = user_regs->ebx;
-    context.uc_mcontext.gregs[REG_ESP] = user_regs->esp;
-    context.uc_mcontext.gregs[REG_EBP] = user_regs->ebp;
-    context.uc_mcontext.gregs[REG_ESI] = user_regs->esi;
-    context.uc_mcontext.gregs[REG_EDI] = user_regs->edi;
-    context.uc_mcontext.gregs[REG_EIP] = user_regs->eip;
-    context.uc_mcontext.gregs[REG_EFL] = user_regs->eflags;
-    setcontext(&context);
-     */
+    void *destination_address = (void *) ((unsigned char *) base_address + offset);
+    memcpy(destination_address, reg, sizeof(long int));
 }
+
+void set_register_values_and_jump(struct elf_prstatus *process_status)
+{
+    struct user_regs_struct user_regs;
+
+    assert(sizeof(struct user_regs_struct) == sizeof(process_status->pr_reg));
+    // TODO: check result
+    memcpy(&user_regs, process_status->pr_reg, sizeof(struct user_regs_struct));
+    void *set_registers_addr = mmap((void *) SET_REGISTERS_CODE_ADDRESS,
+                                    getpagesize(),
+                                    PROT_READ | PROT_WRITE| PROT_EXEC,
+                                    MAP_ANONYMOUS | MAP_PRIVATE,
+                                    -1, 0);
+    if (set_registers_addr == MAP_FAILED) {
+        exit_with_error("Error in mmap\n");
+    }
+    memcpy(set_registers_addr, set_registers_template,
+           sizeof(set_registers_template));
+    printf("%p\n", user_regs.eax);
+    printf("%p\n", user_regs.ecx);
+    printf("%p\n", user_regs.edx);
+    printf("%p\n", user_regs.ebx);
+    printf("%p\n", user_regs.esp);
+    printf("%p\n", user_regs.ebp);
+    printf("%p\n", user_regs.esi);
+    printf("%p\n", user_regs.edi);
+    printf("%p\n", user_regs.eflags);
+    printf("%p\n", user_regs.eip);
+    copy_register_val(&user_regs.eax, set_registers_addr, 1);
+    copy_register_val(&user_regs.ecx, set_registers_addr, 6);
+    copy_register_val(&user_regs.edx, set_registers_addr, 11);
+    copy_register_val(&user_regs.ebx, set_registers_addr, 16);
+    copy_register_val(&user_regs.esp, set_registers_addr, 21);
+    copy_register_val(&user_regs.ebp, set_registers_addr, 26);
+    copy_register_val(&user_regs.esi, set_registers_addr, 31);
+    copy_register_val(&user_regs.edi, set_registers_addr, 36);
+    copy_register_val(&user_regs.eflags, set_registers_addr, 41);
+    copy_register_val(&user_regs.eip, set_registers_addr, 47);
+    print("Jump!\n");
+    void (*set_registers)(void) = (void (*)(void)) set_registers_addr;
+    set_registers();
+}
+
+
 
 void read_core_file(char *file_path)
 {
@@ -418,14 +469,10 @@ void read_core_file(char *file_path)
         exit_with_error("Error while calling set_thread_area\n");
     }
 
-    // TODO: small refactor
-    assert(sizeof(struct user_regs_struct) == sizeof(pt_note_info.process_status.pr_reg));
-    struct user_regs_struct user_regs;
-    // TODO: check result
-    memcpy(&user_regs, pt_note_info.process_status.pr_reg,
-           sizeof(struct user_regs_struct));
+    // TODO: refactor
+
     //printf("%p %p\n", user_regs.ebx, pt_note_info.process_status.pr_reg[0]);
-    set_register_values_and_change_context(&user_regs);
+    set_register_values_and_jump(&pt_note_info.process_status);
 
     //print("OK!\n");
 }
@@ -448,7 +495,7 @@ int main(int argc, char *argv[])
     }
     context.uc_stack.ss_size = INITIAL_STACK_SIZE_IN_PAGES * getpagesize();
     context.uc_link = NULL;
-    makecontext(&context, (void (*)()) read_core_file, 1, argv[1]);
+    makecontext(&context, (void (*)(void)) read_core_file, 1, argv[1]);
     setcontext(&context);
 
     return 0;
