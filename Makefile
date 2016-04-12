@@ -24,7 +24,7 @@ raise.o: raise.c
 	$(CC) $(CFLAGS) $^
 
 test: test.c
-	gcc -Wall -m32 -g -D_GNU_SOURCE -$^ -o $@
+	gcc -Wall -m32 -g -D_GNU_SOURCE $^ -o $@
 
 clean:
 	rm -f raise test *.o *~ *.bak
