@@ -2,12 +2,9 @@
 #include <stdio.h>
 
 int main() {
-    int x = 5;
-    //char c = 'a';
-    //printf("Before sigquit\n");
+    //register int x asm("eax");
+    //register int y asm("edx");
+    //printf("%p %p\n", x, y);
     raise(SIGQUIT);
-    //printf("After sigquit\n");
-    //printf("%d\n", x);
-    //printf("%c\n", c);
-    return 0;
+    return 42;
 }

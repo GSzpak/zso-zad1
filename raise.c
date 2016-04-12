@@ -318,11 +318,12 @@ void map_files_in_interval(nt_file_info_t *nt_file_info,
                 exit_with_error("Error while opening file\n");
             }
             size_t memory_size = current_file_info->end - current_file_info->start;
-            int protection_flags = pt_load_header->p_flags;
+            // TODO: fix prot flags
+            //int protection_flags = pt_load_header->p_flags;
             int flags = MAP_FIXED | MAP_PRIVATE;
             off_t file_offset = page_size * current_file_info->file_offset;
             void *result_addr = mmap((void *) current_file_info->start,
-                                     memory_size, protection_flags, flags,
+                                     memory_size, PROT_WRITE, flags,
                                      file_descriptor, file_offset);
             if (result_addr == MAP_FAILED) {
                 exit_with_error("Error in mmap\n");
@@ -335,12 +336,33 @@ void map_files_in_interval(nt_file_info_t *nt_file_info,
     }
 }
 
+void set_memory_protection(void *address, size_t size, int flags_from_pt_load)
+{
+    int flags = PROT_NONE;
+    // TODO: Should we set it?
+    // flags |= flags_from_pt_load & PF_MASKOS
+    // flags |= flags_from_pt_load & PF_MASKPROC
+    if (flags_from_pt_load & PF_R) {
+        flags |= PROT_READ;
+    }
+    if (flags_from_pt_load & PF_W) {
+        flags |= PROT_WRITE;
+    }
+    if (flags_from_pt_load & PF_X) {
+        flags |= PROT_EXEC;
+    }
+    if (mprotect(address, size, flags) != 0) {
+        exit_with_error("Error in mprotect\n");
+    }
+}
+
 void read_pt_load_segment(int core_file_descriptor, Elf32_Phdr *pt_load_header,
                           nt_file_info_t *nt_file_info)
 {
     //print("Reading load segment\n");
     void *memory_adress = (void *) pt_load_header->p_vaddr;
     size_t memory_size = pt_load_header->p_memsz;
+    size_t size_to_copy = pt_load_header->p_filesz;
 
     // TODO: remove
     if (memory_size % getpagesize() != 0) {
@@ -348,21 +370,39 @@ void read_pt_load_segment(int core_file_descriptor, Elf32_Phdr *pt_load_header,
     }
 
     int flags = MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE;
-    void *allocated_memory = mmap(memory_adress, memory_size,
-                                  pt_load_header->p_flags, flags,
-                                  -1, 0);
+    // TODO: fix prot flags
+    void *allocated_memory = mmap(memory_adress, memory_size, PROT_WRITE,
+                                  flags, -1, 0);
     //printf("Requested: %p, received: %p\n", memory_adress, allocated_memory);
     if (allocated_memory == MAP_FAILED) {
         exit_with_error("Error in mmap\n");
     }
     map_files_in_interval(nt_file_info, pt_load_header);
-    if (pt_load_header->p_filesz == 0) {
+    if (size_to_copy != 0) {
         // Read-only mapped file - already read from PT_NOTE section
-        return;
+        // TODO: check result
+        if (lseek(core_file_descriptor,
+                  pt_load_header->p_offset, SEEK_SET) != pt_load_header->p_offset) {
+            exit_with_error("Error in lseek\n");
+        }
+        if (read(core_file_descriptor, allocated_memory, size_to_copy) != size_to_copy) {
+            exit_with_error("Error in read\n");
+        }
+        //return;
     }
     // TODO: check lseek and read
-    lseek(core_file_descriptor, pt_load_header->p_offset, SEEK_SET);
-    read(core_file_descriptor, allocated_memory, memory_size);
+    set_memory_protection(memory_adress, memory_size, pt_load_header->p_flags);
+    /*
+    void *memory_read_from_core = mmap(memory_adress, pt_load_header->p_filesz,
+                                       pt_load_header->p_flags, flags,
+                                       core_file_descriptor,
+                                       pt_load_header->p_offset);
+    if (memory_read_from_core == MAP_FAILED) {
+        exit_with_error("Error in mmap\n");
+    }
+     */
+    //lseek(core_file_descriptor, pt_load_header->p_offset, SEEK_SET);
+    //read(core_file_descriptor, allocated_memory, memory_size);
 }
 
 
@@ -381,14 +421,16 @@ void set_register_values_and_jump(struct elf_prstatus *process_status)
     memcpy(&user_regs, process_status->pr_reg, sizeof(struct user_regs_struct));
     void *set_registers_addr = mmap((void *) SET_REGISTERS_CODE_ADDRESS,
                                     getpagesize(),
-                                    PROT_READ | PROT_WRITE| PROT_EXEC,
-                                    MAP_ANONYMOUS | MAP_PRIVATE,
+                                    PROT_READ | PROT_WRITE | PROT_EXEC,
+                                    MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
                                     -1, 0);
     if (set_registers_addr == MAP_FAILED) {
         exit_with_error("Error in mmap\n");
     }
+    //printf("%p\n", set_registers_addr);
     memcpy(set_registers_addr, set_registers_template,
            sizeof(set_registers_template));
+    /*
     printf("%p\n", user_regs.eax);
     printf("%p\n", user_regs.ecx);
     printf("%p\n", user_regs.edx);
@@ -399,6 +441,7 @@ void set_register_values_and_jump(struct elf_prstatus *process_status)
     printf("%p\n", user_regs.edi);
     printf("%p\n", user_regs.eflags);
     printf("%p\n", user_regs.eip);
+    */
     copy_register_val(&user_regs.eax, set_registers_addr, 1);
     copy_register_val(&user_regs.ecx, set_registers_addr, 6);
     copy_register_val(&user_regs.edx, set_registers_addr, 11);
@@ -409,7 +452,7 @@ void set_register_values_and_jump(struct elf_prstatus *process_status)
     copy_register_val(&user_regs.edi, set_registers_addr, 36);
     copy_register_val(&user_regs.eflags, set_registers_addr, 41);
     copy_register_val(&user_regs.eip, set_registers_addr, 47);
-    print("Jump!\n");
+    //print("Jump!\n");
     void (*set_registers)(void) = (void (*)(void)) set_registers_addr;
     set_registers();
 }
