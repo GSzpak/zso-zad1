@@ -90,19 +90,21 @@ void *checked_mmap(void *addr, size_t length, int prot, int flags,
 {
     void *result = mmap(addr, length, prot, flags, fd, offset);
     if (result == MAP_FAILED) {
-        exit_with_error("Error in mmap\n");
+        exit_with_error("Error while calling mmap\n");
     }
     return result;
 }
 
-
+void checked_read(int fd, void *buf, size_t count)
+{
+    if (read(fd, buf, count) != count) {
+        exit_with_error("Error while calling read\n");
+    }
+}
 
 void read_and_check_elf_header(int core_file_descriptor, Elf32_Ehdr *elf_header)
 {
-    //print("Checking file\n");
-    if (read(core_file_descriptor, elf_header, sizeof(Elf32_Ehdr)) == -1) {
-        exit_with_error("Error while reading ELF header\n");
-    }
+    checked_read(core_file_descriptor, elf_header, sizeof(Elf32_Ehdr));
     if (elf_header->e_ident[EI_MAG0] != ELFMAG0 ||
             elf_header->e_ident[EI_MAG1] != ELFMAG1 ||
             elf_header->e_ident[EI_MAG2] != ELFMAG2 ||
@@ -115,7 +117,6 @@ void read_and_check_elf_header(int core_file_descriptor, Elf32_Ehdr *elf_header)
     if (elf_header->e_type != ET_CORE) {
         exit_with_error("Error: not a CORE file\n");
     }
-    //print("Core file OK!\n");
 }
 
 int open_core_file(char *file_path)
@@ -152,15 +153,12 @@ void skip_note_entry_name(int core_file_descriptor, size_t name_size,
 size_t read_c_string(int file_descriptor, char *buffer)
 {
     // Assumes, that buffer is big enough to fit the whole name
+    // Returns length of read string
     size_t current_char_pos = 0;
-    if (read(file_descriptor, buffer, sizeof(char)) == -1) {
-        exit_with_error("Error while reading file name\n");
-    }
+    checked_read(file_descriptor, buffer, sizeof(char));
     while (buffer[current_char_pos] != '\0') {
         ++current_char_pos;
-        if (read(file_descriptor, buffer + current_char_pos, sizeof(char)) == -1) {
-            exit_with_error("Error while reading file name\n");
-        }
+        checked_read(file_descriptor, buffer + current_char_pos, sizeof(char));
     }
     return current_char_pos;
 }
@@ -174,12 +172,8 @@ void read_nt_file_section_entries(int core_file_descriptor,
     //printf("num of entries: %d\n", num_of_entries);
     for (int i = 0; i < num_of_entries; ++i) {
         nt_file_entry_t *current_entry = nt_file_entries + i;
-        int read_result = read(core_file_descriptor,
-                               &current_entry->header,
-                               sizeof(nt_file_entry_header_t));
-        if (read_result == -1) {
-            exit_with_error("Error while reading NT_FILE entry\n");
-        }
+        checked_read(core_file_descriptor, &current_entry->header,
+                     sizeof(nt_file_entry_header_t));
         *current_offset += sizeof(nt_file_entry_header_t);
     }
     for (int i = 0; i < num_of_entries; ++i) {
@@ -195,12 +189,10 @@ void read_nt_file_section(int core_file_descriptor, off_t *current_offset,
 {
     nt_file_header_t *header = &nt_file_info->header;
     nt_file_entry_t *entries = nt_file_info->entries;
-    int read_result = read(core_file_descriptor, header,
-                           sizeof(nt_file_header_t));
-    if (read_result == -1) {
-        exit_with_error("Error while reading NT_FILE section header\n");
-    }
+    checked_read(core_file_descriptor, header, sizeof(nt_file_header_t));
     *current_offset += sizeof(nt_file_header_t);
+    // TODO: remove
+    // TODO: check other assertions
     assert(header->page_size = getpagesize());
     read_nt_file_section_entries(core_file_descriptor, current_offset,
                                  header, entries);
@@ -209,11 +201,8 @@ void read_nt_file_section(int core_file_descriptor, off_t *current_offset,
 void read_nt_prstatus_section(int core_file_descriptor, off_t *current_offset,
                               pt_note_info_t *pt_note_info)
 {
-    int read_result = read(core_file_descriptor, &pt_note_info->process_status,
-                           sizeof(struct elf_prstatus));
-    if (read_result == -1) {
-        exit_with_error("Error while reading NT_PRSTATUS section\n");
-    }
+    checked_read(core_file_descriptor, &pt_note_info->process_status,
+                 sizeof(struct elf_prstatus));
     *current_offset += sizeof(struct elf_prstatus);
     pt_note_info->nt_prstatus_found = true;
 }
@@ -221,11 +210,8 @@ void read_nt_prstatus_section(int core_file_descriptor, off_t *current_offset,
 void read_nt_386_tls_section(int core_file_descriptor, off_t *current_offset,
                              pt_note_info_t *pt_note_info)
 {
-    int read_result = read(core_file_descriptor, &pt_note_info->user_info,
-                           sizeof(struct user_desc));
-    if (read_result == -1) {
-        exit_with_error("Error while reading NT_386_TLS section\n");
-    }
+    checked_read(core_file_descriptor, &pt_note_info->user_info,
+                 sizeof(struct user_desc));
     *current_offset += sizeof(struct user_desc);
     pt_note_info->nt_386_tls_found = true;
 }
@@ -237,18 +223,14 @@ void read_note_entry_descriptor(int core_file_descriptor, off_t *current_offset,
     off_t offset_before_reading_note_section = *current_offset;
     switch (entry_header->type) {
         case NT_FILE:
-            //print("NT_FILE found\n");
-            //printf("NT_FILE size: %p\n", entry_header->desc_size);
             read_nt_file_section(core_file_descriptor, current_offset,
                                  &pt_note_info->nt_file_info);
             break;
         case NT_PRSTATUS:
-            //print("NT_PRSTATUS found\n");
             read_nt_prstatus_section(core_file_descriptor, current_offset,
                                      pt_note_info);
             break;
         case NT_386_TLS:
-            //print("NT_386_TLS found\n");
             // TODO: fix
             read_nt_386_tls_section(core_file_descriptor, current_offset,
                                     pt_note_info);
@@ -281,10 +263,8 @@ void read_note_entry(int core_file_descriptor, off_t *current_offset,
                      pt_note_info_t *pt_note_info)
 {
     note_entry_header_t entry_header;
-    if (read(core_file_descriptor, &entry_header,
-             sizeof(note_entry_header_t)) == -1) {
-        exit_with_error("Error while reading NOTE entry\n");
-    }
+    checked_read(core_file_descriptor, &entry_header,
+                 sizeof(note_entry_header_t));
     *current_offset += sizeof(note_entry_header_t);
     skip_note_entry_name(core_file_descriptor, entry_header.name_size,
                          current_offset);
@@ -387,10 +367,7 @@ void read_pt_load_segment(int core_file_descriptor, Elf32_Phdr *pt_load_header,
                   pt_load_header->p_offset, SEEK_SET) != pt_load_header->p_offset) {
             exit_with_error("Error in lseek\n");
         }
-        if (read(core_file_descriptor, allocated_memory, size_to_copy) != size_to_copy) {
-            exit_with_error("Error in read\n");
-        }
-        //return;
+        checked_read(core_file_descriptor, allocated_memory, size_to_copy);
     }
     // TODO: check lseek and read
     set_memory_protection(memory_adress, memory_size, pt_load_header->p_flags);
@@ -445,18 +422,13 @@ void read_core_file(char *file_path)
             .nt_386_tls_found = false,
             .nt_file_info.header.number_of_entries = 0
         };
-    int read_result;
     off_t current_offset;
     bool pt_note_successfully_read = false;
 
     read_and_check_elf_header(core_file_descriptor, &elf_header);
 
     for (int i = 0; i < elf_header.e_phnum; ++i) {
-        read_result = read(core_file_descriptor,
-                           &program_header, sizeof(Elf32_Phdr));
-        if (read_result == -1) {
-            exit_with_error("Error while reading program header\n");
-        }
+        checked_read(core_file_descriptor, &program_header, sizeof(Elf32_Phdr));
         current_offset = lseek(core_file_descriptor, 0, SEEK_CUR);
         switch (program_header.p_type) {
             case PT_NOTE:
