@@ -72,13 +72,12 @@ unsigned char set_registers_template[] = {
     0x9d,                           // popf
     0x68, 0x0, 0x0, 0x0, 0x0,       // push <val>
     0xc3                            // ret
-    // push <val>; ret is equivalent to jmp <val>
 };
 
 
 static ucontext_t context;
 
-
+// TODO: move to utils
 void exit_with_error(const char *reason)
 {
     fprintf(stderr, "%s", reason);
@@ -102,13 +101,41 @@ void checked_read(int fd, void *buf, size_t count)
     }
 }
 
+void print(const char *text)
+{
+    char buf[MAX_CHAR_BUF_SIZE] = {0x0};
+    int len = strlen(text);
+    strcpy(buf, text);
+    write(1, buf, len);
+}
+
+unsigned int aligned_to_4(unsigned int val)
+{
+    unsigned int val_mod_4 = val % 4;
+    return val_mod_4 == 0 ? val : val + (4 - val_mod_4);
+}
+
+size_t read_c_string(int file_descriptor, char *buffer)
+{
+    // Assumes, that buffer is big enough to fit the whole name
+    // Returns length of read string
+    size_t current_char_pos = 0;
+    checked_read(file_descriptor, buffer, sizeof(char));
+    while (buffer[current_char_pos] != '\0') {
+        ++current_char_pos;
+        checked_read(file_descriptor, buffer + current_char_pos, sizeof(char));
+    }
+    return current_char_pos;
+}
+
+
 void read_and_check_elf_header(int core_file_descriptor, Elf32_Ehdr *elf_header)
 {
     checked_read(core_file_descriptor, elf_header, sizeof(Elf32_Ehdr));
     if (elf_header->e_ident[EI_MAG0] != ELFMAG0 ||
-            elf_header->e_ident[EI_MAG1] != ELFMAG1 ||
-            elf_header->e_ident[EI_MAG2] != ELFMAG2 ||
-            elf_header->e_ident[EI_MAG3] != ELFMAG3) {
+        elf_header->e_ident[EI_MAG1] != ELFMAG1 ||
+        elf_header->e_ident[EI_MAG2] != ELFMAG2 ||
+        elf_header->e_ident[EI_MAG3] != ELFMAG3) {
         exit_with_error("Error: not an ELF file\n");
     }
     if (elf_header->e_machine != EM_386) {
@@ -126,41 +153,6 @@ int open_core_file(char *file_path)
         exit_with_error("Error while opening core file\n");
     }
     return core_file_descriptor;
-}
-
-void print(const char *text)
-{
-    char buf[MAX_CHAR_BUF_SIZE] = {0x0};
-    int len = strlen(text);
-    strcpy(buf, text);
-    write(1, buf, len);
-}
-
-unsigned int aligned_to_4(unsigned int val)
-{
-    unsigned int val_mod_4 = val % 4;
-    return val_mod_4 == 0 ? val : val + (4 - val_mod_4);
-}
-
-void skip_note_entry_name(int core_file_descriptor, size_t name_size,
-                          off_t *current_offset)
-{
-    off_t name_aligned_to_4_bytes = aligned_to_4(name_size);
-    lseek(core_file_descriptor, name_aligned_to_4_bytes, SEEK_CUR);
-    *current_offset += name_aligned_to_4_bytes;
-}
-
-size_t read_c_string(int file_descriptor, char *buffer)
-{
-    // Assumes, that buffer is big enough to fit the whole name
-    // Returns length of read string
-    size_t current_char_pos = 0;
-    checked_read(file_descriptor, buffer, sizeof(char));
-    while (buffer[current_char_pos] != '\0') {
-        ++current_char_pos;
-        checked_read(file_descriptor, buffer + current_char_pos, sizeof(char));
-    }
-    return current_char_pos;
 }
 
 void read_nt_file_section_entries(int core_file_descriptor,
@@ -257,6 +249,14 @@ void read_note_entry_descriptor(int core_file_descriptor, off_t *current_offset,
     }
 }
 
+void skip_note_entry_name(int core_file_descriptor, size_t name_size,
+                          off_t *current_offset)
+{
+    off_t name_aligned_to_4_bytes = aligned_to_4(name_size);
+    lseek(core_file_descriptor, name_aligned_to_4_bytes, SEEK_CUR);
+    *current_offset += name_aligned_to_4_bytes;
+}
+
 // TODO: Check for lseek error
 
 void read_note_entry(int core_file_descriptor, off_t *current_offset,
@@ -293,13 +293,10 @@ void map_files_in_interval(nt_file_info_t *nt_file_info,
     nt_file_entry_t *file_entries = nt_file_info->entries;
     addr_t start_addr = (addr_t) pt_load_header->p_vaddr;
     addr_t end_addr = start_addr + pt_load_header->p_memsz;
-    //printf("%p, %p\n", start_addr, end_addr);
     for (int i = 0; i < number_of_files; ++i) {
         nt_file_entry_header_t *current_file_info = &((file_entries + i)->header);
         if (current_file_info->start >= start_addr &&
                 current_file_info->start < end_addr) {
-            //printf("\t%p, %p\n", current_file_info->start, current_file_info->end);
-            //puts((file_entries + i)->file_path);
             assert(current_file_info->end <= end_addr);
             int file_descriptor = open((file_entries + i)->file_path, O_RDONLY);
             if (file_descriptor == -1) {
@@ -404,7 +401,6 @@ void set_register_values_and_jump(struct elf_prstatus *process_status)
     copy_register_val(&user_regs.edi, set_registers_addr, 36);
     copy_register_val(&user_regs.eflags, set_registers_addr, 41);
     copy_register_val(&user_regs.eip, set_registers_addr, 47);
-    //print("Jump!\n");
     void (*set_registers)(void) = (void (*)(void)) set_registers_addr;
     set_registers();
 }
