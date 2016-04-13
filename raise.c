@@ -323,9 +323,7 @@ void map_files_in_interval(nt_file_info_t *nt_file_info,
             assert(current_file_info->end <= end_addr);
             int file_descriptor = open((file_entries + i)->file_path, O_RDONLY);
             if (file_descriptor == -1) {
-                // TODO: support passing many arguments
-                print((file_entries + i)->file_path);
-                exit_with_error("Error while opening file\n");
+                exit_with_error("Error while opening mapped file\n");
             }
             size_t memory_size = current_file_info->end - current_file_info->start;
             // TODO: fix prot flags
@@ -479,7 +477,9 @@ void read_core_file(char *file_path)
         lseek(core_file_descriptor, current_offset, SEEK_SET);
     }
 
-    close(core_file_descriptor);
+    if (close(core_file_descriptor) != 0) {
+        exit_with_error("Error while closing core file\n");
+    }
 
     if (!pt_note_info.nt_prstatus_found) {
         exit_with_error("NT_PRSTATUS section not found in core file\n");
@@ -493,10 +493,7 @@ void read_core_file(char *file_path)
 
     // TODO: refactor
 
-    //printf("%p %p\n", user_regs.ebx, pt_note_info.process_status.pr_reg[0]);
     set_register_values_and_jump(&pt_note_info.process_status);
-
-    //print("OK!\n");
 }
 
 int main(int argc, char *argv[])
