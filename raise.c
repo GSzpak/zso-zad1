@@ -272,10 +272,11 @@ void read_note_entry(int core_file_descriptor, off_t *current_offset,
                      pt_note_info_t *pt_note_info)
 {
     note_entry_header_t entry_header;
-    if (read(core_file_descriptor, &entry_header, sizeof(entry_header)) == -1) {
+    if (read(core_file_descriptor, &entry_header,
+             sizeof(note_entry_header_t)) == -1) {
         exit_with_error("Error while reading NOTE entry\n");
     }
-    *current_offset += sizeof(entry_header);
+    *current_offset += sizeof(note_entry_header_t);
     skip_note_entry_name(core_file_descriptor, entry_header.name_size,
                          current_offset);
     read_note_entry_descriptor(core_file_descriptor, current_offset,
@@ -528,7 +529,6 @@ int main(int argc, char *argv[])
         exit_with_error("Usage: ./raise <core-file>\n");
     }
 
-    // TODO: sizeofs
     getcontext(&context);
     context.uc_stack.ss_sp = mmap(
             (void *) (STACK_TOP_ADDRESS - INITIAL_STACK_SIZE_IN_PAGES * getpagesize()),
