@@ -85,6 +85,16 @@ void exit_with_error(const char *reason)
     exit(EXIT_FAILURE);
 }
 
+void *checked_mmap(void *addr, size_t length, int prot, int flags,
+                   int fd, off_t offset)
+{
+    void *result = mmap(addr, length, prot, flags, fd, offset);
+    if (result == MAP_FAILED) {
+        exit_with_error("Error in mmap\n");
+    }
+    return result;
+}
+
 
 
 void read_and_check_elf_header(int core_file_descriptor, Elf32_Ehdr *elf_header)
@@ -216,7 +226,6 @@ void read_nt_386_tls_section(int core_file_descriptor, off_t *current_offset,
     if (read_result == -1) {
         exit_with_error("Error while reading NT_386_TLS section\n");
     }
-    // TODO: check on i386
     *current_offset += sizeof(struct user_desc);
     pt_note_info->nt_386_tls_found = true;
 }
@@ -321,14 +330,11 @@ void map_files_in_interval(nt_file_info_t *nt_file_info,
             size_t memory_size = current_file_info->end - current_file_info->start;
             // TODO: fix prot flags
             //int protection_flags = pt_load_header->p_flags;
-            int flags = MAP_FIXED | MAP_PRIVATE;
             off_t file_offset = page_size * current_file_info->file_offset;
-            void *result_addr = mmap((void *) current_file_info->start,
-                                     memory_size, PROT_WRITE, flags,
-                                     file_descriptor, file_offset);
-            if (result_addr == MAP_FAILED) {
-                exit_with_error("Error in mmap\n");
-            }
+            void *result_addr = checked_mmap((void *) current_file_info->start,
+                                             memory_size, PROT_WRITE,
+                                             MAP_FIXED | MAP_PRIVATE,
+                                             file_descriptor, file_offset);
             // TODO: remove
             if (result_addr != (void *) current_file_info->start) {
                 exit_with_error("No kurwa\n");
@@ -370,14 +376,11 @@ void read_pt_load_segment(int core_file_descriptor, Elf32_Phdr *pt_load_header,
         exit_with_error("No kurwa...\n");
     }
 
-    int flags = MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE;
     // TODO: fix prot flags
-    void *allocated_memory = mmap(memory_adress, memory_size, PROT_WRITE,
-                                  flags, -1, 0);
-    //printf("Requested: %p, received: %p\n", memory_adress, allocated_memory);
-    if (allocated_memory == MAP_FAILED) {
-        exit_with_error("Error in mmap\n");
-    }
+    void *allocated_memory = checked_mmap(memory_adress, memory_size,
+                                          PROT_WRITE,
+                                          MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
+                                          -1, 0);
     map_files_in_interval(nt_file_info, pt_load_header);
     if (size_to_copy != 0) {
         // Read-only mapped file - already read from PT_NOTE section
@@ -393,17 +396,6 @@ void read_pt_load_segment(int core_file_descriptor, Elf32_Phdr *pt_load_header,
     }
     // TODO: check lseek and read
     set_memory_protection(memory_adress, memory_size, pt_load_header->p_flags);
-    /*
-    void *memory_read_from_core = mmap(memory_adress, pt_load_header->p_filesz,
-                                       pt_load_header->p_flags, flags,
-                                       core_file_descriptor,
-                                       pt_load_header->p_offset);
-    if (memory_read_from_core == MAP_FAILED) {
-        exit_with_error("Error in mmap\n");
-    }
-     */
-    //lseek(core_file_descriptor, pt_load_header->p_offset, SEEK_SET);
-    //read(core_file_descriptor, allocated_memory, memory_size);
 }
 
 
@@ -420,29 +412,13 @@ void set_register_values_and_jump(struct elf_prstatus *process_status)
     assert(sizeof(struct user_regs_struct) == sizeof(process_status->pr_reg));
     // TODO: check result
     memcpy(&user_regs, process_status->pr_reg, sizeof(struct user_regs_struct));
-    void *set_registers_addr = mmap((void *) SET_REGISTERS_CODE_ADDRESS,
-                                    getpagesize(),
-                                    PROT_READ | PROT_WRITE | PROT_EXEC,
-                                    MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
-                                    -1, 0);
-    if (set_registers_addr == MAP_FAILED) {
-        exit_with_error("Error in mmap\n");
-    }
-    //printf("%p\n", set_registers_addr);
+    void *set_registers_addr = checked_mmap((void *) SET_REGISTERS_CODE_ADDRESS,
+                                            getpagesize(),
+                                            PROT_READ | PROT_WRITE | PROT_EXEC,
+                                            MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
+                                            -1, 0);
     memcpy(set_registers_addr, set_registers_template,
            sizeof(set_registers_template));
-    /*
-    printf("%p\n", user_regs.eax);
-    printf("%p\n", user_regs.ecx);
-    printf("%p\n", user_regs.edx);
-    printf("%p\n", user_regs.ebx);
-    printf("%p\n", user_regs.esp);
-    printf("%p\n", user_regs.ebp);
-    printf("%p\n", user_regs.esi);
-    printf("%p\n", user_regs.edi);
-    printf("%p\n", user_regs.eflags);
-    printf("%p\n", user_regs.eip);
-    */
     copy_register_val(&user_regs.eax, set_registers_addr, 1);
     copy_register_val(&user_regs.ecx, set_registers_addr, 6);
     copy_register_val(&user_regs.edx, set_registers_addr, 11);
@@ -525,20 +501,18 @@ void read_core_file(char *file_path)
 
 int main(int argc, char *argv[])
 {
+    // TODO: unmap top
     if (argc != 2) {
         exit_with_error("Usage: ./raise <core-file>\n");
     }
 
     getcontext(&context);
-    context.uc_stack.ss_sp = mmap(
+    context.uc_stack.ss_sp = checked_mmap(
             (void *) (STACK_TOP_ADDRESS - INITIAL_STACK_SIZE_IN_PAGES * getpagesize()),
             INITIAL_STACK_SIZE_IN_PAGES * getpagesize(),
             PROT_READ | PROT_WRITE,
             MAP_GROWSDOWN | MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
             -1, 0);
-    if (context.uc_stack.ss_sp == MAP_FAILED) {
-        exit_with_error("Error in mmap\n");
-    }
     context.uc_stack.ss_size = INITIAL_STACK_SIZE_IN_PAGES * getpagesize();
     context.uc_link = NULL;
     makecontext(&context, (void (*)(void)) read_core_file, 1, argv[1]);
