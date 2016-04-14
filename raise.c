@@ -376,7 +376,6 @@ void read_pt_load_segment(int core_file_descriptor, Elf32_Phdr *pt_load_header,
     set_memory_protection(memory_adress, memory_size, pt_load_header->p_flags);
 }
 
-
 void copy_register_val(long int *reg, void *base_address, off_t offset)
 {
     void *destination_address = (void *) ((unsigned char *) base_address + offset);
@@ -388,7 +387,6 @@ void set_register_values_and_jump(struct elf_prstatus *process_status)
     struct user_regs_struct user_regs;
 
     assert(sizeof(struct user_regs_struct) == sizeof(process_status->pr_reg));
-    // TODO: check result
     memcpy(&user_regs, process_status->pr_reg, sizeof(struct user_regs_struct));
     void *set_registers_addr = checked_mmap((void *) SET_REGISTERS_CODE_ADDRESS,
                                             getpagesize(),
@@ -411,8 +409,6 @@ void set_register_values_and_jump(struct elf_prstatus *process_status)
     set_registers();
 }
 
-
-
 void read_core_file(char *file_path)
 {
     int core_file_descriptor = open_core_file(file_path);
@@ -432,6 +428,7 @@ void read_core_file(char *file_path)
     for (int i = 0; i < elf_header.e_phnum; ++i) {
         checked_read(core_file_descriptor, &program_header, sizeof(Elf32_Phdr));
         current_offset = checked_lseek(core_file_descriptor, 0, SEEK_CUR);
+        // TODO: first read PT_NOTE, then PT_LOADS
         switch (program_header.p_type) {
             case PT_NOTE:
                 read_pt_note_segment(core_file_descriptor, &program_header,
@@ -454,7 +451,6 @@ void read_core_file(char *file_path)
     if (close(core_file_descriptor) != 0) {
         exit_with_error("Error while closing core file\n");
     }
-
     if (!pt_note_info.nt_prstatus_found) {
         exit_with_error("NT_PRSTATUS section not found in core file\n");
     }
@@ -464,9 +460,6 @@ void read_core_file(char *file_path)
     if (syscall(SYS_set_thread_area, &pt_note_info.user_info) == -1) {
         exit_with_error("Error while calling set_thread_area\n");
     }
-
-    // TODO: refactor
-
     set_register_values_and_jump(&pt_note_info.process_status);
 }
 
