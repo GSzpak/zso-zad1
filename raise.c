@@ -101,6 +101,15 @@ void checked_read(int fd, void *buf, size_t count)
     }
 }
 
+off_t checked_lseek(int fd, off_t offset, int whence)
+{
+    off_t result = lseek(fd, offset, whence);
+    if (result == (off_t) -1) {
+        exit_with_error("Error in lseek\n");
+    }
+    return result;
+}
+
 void print(const char *text)
 {
     char buf[MAX_CHAR_BUF_SIZE] = {0x0};
@@ -133,9 +142,9 @@ void read_and_check_elf_header(int core_file_descriptor, Elf32_Ehdr *elf_header)
 {
     checked_read(core_file_descriptor, elf_header, sizeof(Elf32_Ehdr));
     if (elf_header->e_ident[EI_MAG0] != ELFMAG0 ||
-        elf_header->e_ident[EI_MAG1] != ELFMAG1 ||
-        elf_header->e_ident[EI_MAG2] != ELFMAG2 ||
-        elf_header->e_ident[EI_MAG3] != ELFMAG3) {
+            elf_header->e_ident[EI_MAG1] != ELFMAG1 ||
+            elf_header->e_ident[EI_MAG2] != ELFMAG2 ||
+            elf_header->e_ident[EI_MAG3] != ELFMAG3) {
         exit_with_error("Error: not an ELF file\n");
     }
     if (elf_header->e_machine != EM_386) {
@@ -226,13 +235,13 @@ void read_note_entry_descriptor(int core_file_descriptor, off_t *current_offset,
             // TODO: fix
             read_nt_386_tls_section(core_file_descriptor, current_offset,
                                     pt_note_info);
-            lseek(core_file_descriptor,
-                  entry_header->desc_size - sizeof(struct user_desc),
-                  SEEK_CUR);
+            checked_lseek(core_file_descriptor,
+                          entry_header->desc_size - sizeof(struct user_desc),
+                          SEEK_CUR);
             *current_offset += (entry_header->desc_size - sizeof(struct user_desc));
             break;
         default:
-            lseek(core_file_descriptor, entry_header->desc_size, SEEK_CUR);
+            checked_lseek(core_file_descriptor, entry_header->desc_size, SEEK_CUR);
             *current_offset += entry_header->desc_size;
             break;
     }
@@ -244,7 +253,7 @@ void read_note_entry_descriptor(int core_file_descriptor, off_t *current_offset,
     size_t desc_size_aligned_to_4 = aligned_to_4(descriptor_size);
     if (desc_size_aligned_to_4 > descriptor_size) {
         off_t to_seek = desc_size_aligned_to_4 - descriptor_size;
-        lseek(core_file_descriptor, to_seek, SEEK_CUR);
+        checked_lseek(core_file_descriptor, to_seek, SEEK_CUR);
         *current_offset += to_seek;
     }
 }
@@ -253,11 +262,10 @@ void skip_note_entry_name(int core_file_descriptor, size_t name_size,
                           off_t *current_offset)
 {
     off_t name_aligned_to_4_bytes = aligned_to_4(name_size);
-    lseek(core_file_descriptor, name_aligned_to_4_bytes, SEEK_CUR);
+    checked_lseek(core_file_descriptor, name_aligned_to_4_bytes, SEEK_CUR);
     *current_offset += name_aligned_to_4_bytes;
 }
 
-// TODO: Check for lseek error
 
 void read_note_entry(int core_file_descriptor, off_t *current_offset,
                      pt_note_info_t *pt_note_info)
@@ -276,7 +284,7 @@ void read_pt_note_segment(int core_file_descriptor, Elf32_Phdr *program_header,
                           pt_note_info_t *pt_note_info)
 {
     //print("Reading note segment\n");
-    lseek(core_file_descriptor, program_header->p_offset, SEEK_SET);
+    checked_lseek(core_file_descriptor, program_header->p_offset, SEEK_SET);
     off_t current_offset = 0;
     size_t note_section_size = program_header->p_filesz;
     while (current_offset < note_section_size) {
@@ -303,16 +311,13 @@ void map_files_in_interval(nt_file_info_t *nt_file_info,
                 exit_with_error("Error while opening mapped file\n");
             }
             size_t memory_size = current_file_info->end - current_file_info->start;
-            // TODO: fix prot flags
-            //int protection_flags = pt_load_header->p_flags;
             off_t file_offset = page_size * current_file_info->file_offset;
-            void *result_addr = checked_mmap((void *) current_file_info->start,
-                                             memory_size, PROT_WRITE,
-                                             MAP_FIXED | MAP_PRIVATE,
-                                             file_descriptor, file_offset);
-            // TODO: remove
-            if (result_addr != (void *) current_file_info->start) {
-                exit_with_error("No kurwa\n");
+            checked_mmap((void *) current_file_info->start,
+                         memory_size, PROT_WRITE,
+                         MAP_FIXED | MAP_PRIVATE,
+                         file_descriptor, file_offset);
+            if (close(file_descriptor) != 0) {
+                exit_with_error("Error while closing mapped file\n");
             }
         }
     }
@@ -346,27 +351,16 @@ void read_pt_load_segment(int core_file_descriptor, Elf32_Phdr *pt_load_header,
     size_t memory_size = pt_load_header->p_memsz;
     size_t size_to_copy = pt_load_header->p_filesz;
 
-    // TODO: remove
-    if (memory_size % getpagesize() != 0) {
-        exit_with_error("No kurwa...\n");
-    }
-
-    // TODO: fix prot flags
     void *allocated_memory = checked_mmap(memory_adress, memory_size,
                                           PROT_WRITE,
                                           MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
                                           -1, 0);
     map_files_in_interval(nt_file_info, pt_load_header);
     if (size_to_copy != 0) {
-        // Read-only mapped file - already read from PT_NOTE section
         // TODO: check result
-        if (lseek(core_file_descriptor,
-                  pt_load_header->p_offset, SEEK_SET) != pt_load_header->p_offset) {
-            exit_with_error("Error in lseek\n");
-        }
+        checked_lseek(core_file_descriptor, pt_load_header->p_offset, SEEK_SET);
         checked_read(core_file_descriptor, allocated_memory, size_to_copy);
     }
-    // TODO: check lseek and read
     set_memory_protection(memory_adress, memory_size, pt_load_header->p_flags);
 }
 
@@ -425,7 +419,7 @@ void read_core_file(char *file_path)
 
     for (int i = 0; i < elf_header.e_phnum; ++i) {
         checked_read(core_file_descriptor, &program_header, sizeof(Elf32_Phdr));
-        current_offset = lseek(core_file_descriptor, 0, SEEK_CUR);
+        current_offset = checked_lseek(core_file_descriptor, 0, SEEK_CUR);
         switch (program_header.p_type) {
             case PT_NOTE:
                 read_pt_note_segment(core_file_descriptor, &program_header,
@@ -442,7 +436,7 @@ void read_core_file(char *file_path)
             default:
                 break;
         }
-        lseek(core_file_descriptor, current_offset, SEEK_SET);
+        checked_lseek(core_file_descriptor, current_offset, SEEK_SET);
     }
 
     if (close(core_file_descriptor) != 0) {
