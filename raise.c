@@ -164,120 +164,132 @@ int open_core_file(char *file_path)
     return core_file_descriptor;
 }
 
-void read_nt_file_section_entries(int core_file_descriptor,
-                                  off_t *current_offset,
-                                  nt_file_header_t *nt_file_header,
-                                  nt_file_entry_t *nt_file_entries)
+size_t read_nt_file_section_entries(int core_file_descriptor,
+                                    nt_file_header_t *nt_file_header,
+                                    nt_file_entry_t *nt_file_entries)
 {
     int num_of_entries = nt_file_header->number_of_entries;
-    //printf("num of entries: %d\n", num_of_entries);
+    size_t bytes_read = 0;
+
     for (int i = 0; i < num_of_entries; ++i) {
         nt_file_entry_t *current_entry = nt_file_entries + i;
         checked_read(core_file_descriptor, &current_entry->header,
                      sizeof(nt_file_entry_header_t));
-        *current_offset += sizeof(nt_file_entry_header_t);
+        bytes_read += sizeof(nt_file_entry_header_t);
     }
     for (int i = 0; i < num_of_entries; ++i) {
         size_t name_length = read_c_string(core_file_descriptor,
                                            (nt_file_entries + i)->file_path);
         // Add one for trailing '\0' character
-        *current_offset += (name_length + 1);
+        bytes_read += (name_length + 1);
     }
+    return bytes_read;
 }
 
-void read_nt_file_section(int core_file_descriptor, off_t *current_offset,
-                          nt_file_info_t *nt_file_info)
+size_t read_nt_file_section(int core_file_descriptor,
+                            nt_file_info_t *nt_file_info)
 {
+    size_t bytes_read = 0;
     nt_file_header_t *header = &nt_file_info->header;
     nt_file_entry_t *entries = nt_file_info->entries;
     checked_read(core_file_descriptor, header, sizeof(nt_file_header_t));
-    *current_offset += sizeof(nt_file_header_t);
+    bytes_read += sizeof(nt_file_header_t);
     // TODO: remove
     // TODO: check other assertions
     assert(header->page_size = getpagesize());
-    read_nt_file_section_entries(core_file_descriptor, current_offset,
-                                 header, entries);
+    bytes_read += read_nt_file_section_entries(core_file_descriptor, header, entries);
+    return bytes_read;
 }
 
-void read_nt_prstatus_section(int core_file_descriptor, off_t *current_offset,
-                              pt_note_info_t *pt_note_info)
+size_t read_nt_prstatus_section(int core_file_descriptor,
+                                pt_note_info_t *pt_note_info)
 {
+    size_t bytes_read = 0;
     checked_read(core_file_descriptor, &pt_note_info->process_status,
                  sizeof(struct elf_prstatus));
-    *current_offset += sizeof(struct elf_prstatus);
+    bytes_read += sizeof(struct elf_prstatus);
     pt_note_info->nt_prstatus_found = true;
+    return bytes_read;
 }
 
-void read_nt_386_tls_section(int core_file_descriptor, off_t *current_offset,
-                             pt_note_info_t *pt_note_info)
+size_t read_nt_386_tls_section(int core_file_descriptor,
+                               pt_note_info_t *pt_note_info,
+                               size_t section_size)
 {
+    size_t bytes_read = 0;
     checked_read(core_file_descriptor, &pt_note_info->user_info,
                  sizeof(struct user_desc));
-    *current_offset += sizeof(struct user_desc);
+    bytes_read += sizeof(struct user_desc);
     pt_note_info->nt_386_tls_found = true;
+    // As there was only one thread, skip the rest of the section
+    size_t to_seek = section_size - sizeof(struct user_desc);
+    checked_lseek(core_file_descriptor, to_seek, SEEK_CUR);
+    bytes_read += to_seek;
+    return bytes_read;
 }
 
-void read_note_entry_descriptor(int core_file_descriptor, off_t *current_offset,
-                                pt_note_info_t *pt_note_info,
-                                note_entry_header_t *entry_header)
+size_t read_note_entry_descriptor(int core_file_descriptor,
+                                  pt_note_info_t *pt_note_info,
+                                  note_entry_header_t *entry_header)
 {
-    off_t offset_before_reading_note_section = *current_offset;
+    size_t bytes_read = 0;
     switch (entry_header->type) {
         case NT_FILE:
-            read_nt_file_section(core_file_descriptor, current_offset,
-                                 &pt_note_info->nt_file_info);
+            // TODO: remove prints
+            //print("NT_FILE\n");
+            bytes_read += read_nt_file_section(core_file_descriptor,
+                                               &pt_note_info->nt_file_info);
             break;
         case NT_PRSTATUS:
-            read_nt_prstatus_section(core_file_descriptor, current_offset,
-                                     pt_note_info);
+            //print("NT_PRSTATUS\n");
+            bytes_read += read_nt_prstatus_section(core_file_descriptor,
+                                                   pt_note_info);
             break;
         case NT_386_TLS:
-            // TODO: fix
-            read_nt_386_tls_section(core_file_descriptor, current_offset,
-                                    pt_note_info);
-            checked_lseek(core_file_descriptor,
-                          entry_header->desc_size - sizeof(struct user_desc),
-                          SEEK_CUR);
-            *current_offset += (entry_header->desc_size - sizeof(struct user_desc));
+            //print("NT_386_TLS\n");
+            bytes_read += read_nt_386_tls_section(core_file_descriptor,
+                                                  pt_note_info,
+                                                  entry_header->desc_size);
             break;
         default:
+            // Skip the section
             checked_lseek(core_file_descriptor, entry_header->desc_size, SEEK_CUR);
-            *current_offset += entry_header->desc_size;
+            bytes_read += entry_header->desc_size;
             break;
     }
     // TODO: remove
-    size_t nt_descriptor_size = *current_offset - offset_before_reading_note_section;
-    assert(nt_descriptor_size == entry_header->desc_size);
+    assert(bytes_read == entry_header->desc_size);
 
     size_t descriptor_size = entry_header->desc_size;
     size_t desc_size_aligned_to_4 = aligned_to_4(descriptor_size);
     if (desc_size_aligned_to_4 > descriptor_size) {
         off_t to_seek = desc_size_aligned_to_4 - descriptor_size;
         checked_lseek(core_file_descriptor, to_seek, SEEK_CUR);
-        *current_offset += to_seek;
+        bytes_read += to_seek;
     }
+    return bytes_read;
 }
 
-void skip_note_entry_name(int core_file_descriptor, size_t name_size,
-                          off_t *current_offset)
+size_t skip_note_entry_name(int core_file_descriptor, size_t name_size)
 {
     off_t name_aligned_to_4_bytes = aligned_to_4(name_size);
     checked_lseek(core_file_descriptor, name_aligned_to_4_bytes, SEEK_CUR);
-    *current_offset += name_aligned_to_4_bytes;
+    return (size_t) name_aligned_to_4_bytes;
 }
 
 
-void read_note_entry(int core_file_descriptor, off_t *current_offset,
-                     pt_note_info_t *pt_note_info)
+size_t read_note_entry(int core_file_descriptor, pt_note_info_t *pt_note_info)
 {
+    size_t bytes_read = 0;
     note_entry_header_t entry_header;
     checked_read(core_file_descriptor, &entry_header,
                  sizeof(note_entry_header_t));
-    *current_offset += sizeof(note_entry_header_t);
-    skip_note_entry_name(core_file_descriptor, entry_header.name_size,
-                         current_offset);
-    read_note_entry_descriptor(core_file_descriptor, current_offset,
-                               pt_note_info, &entry_header);
+    bytes_read += sizeof(note_entry_header_t);
+    bytes_read += skip_note_entry_name(core_file_descriptor,
+                                       entry_header.name_size);
+    bytes_read += read_note_entry_descriptor(core_file_descriptor, pt_note_info,
+                                             &entry_header);
+    return bytes_read;
 }
 
 void read_pt_note_segment(int core_file_descriptor, Elf32_Phdr *program_header,
@@ -288,7 +300,8 @@ void read_pt_note_segment(int core_file_descriptor, Elf32_Phdr *program_header,
     off_t current_offset = 0;
     size_t note_section_size = program_header->p_filesz;
     while (current_offset < note_section_size) {
-        read_note_entry(core_file_descriptor, &current_offset, pt_note_info);
+         current_offset += read_note_entry(core_file_descriptor,
+                                           pt_note_info);
     }
 }
 
@@ -357,7 +370,6 @@ void read_pt_load_segment(int core_file_descriptor, Elf32_Phdr *pt_load_header,
                                           -1, 0);
     map_files_in_interval(nt_file_info, pt_load_header);
     if (size_to_copy != 0) {
-        // TODO: check result
         checked_lseek(core_file_descriptor, pt_load_header->p_offset, SEEK_SET);
         checked_read(core_file_descriptor, allocated_memory, size_to_copy);
     }
