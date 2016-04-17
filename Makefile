@@ -1,7 +1,6 @@
-TARGET: raise test
+TARGET: raise
 
-MMAP_MIN_ADDR_DEC = $(shell sysctl -n vm.mmap_min_addr)
-MMAP_MIN_ADDR_HEX = $(shell printf "%x" $(MMAP_MIN_ADDR_DEC))
+
 CC = gcc
 CFLAGS = -Wall -pedantic -std=c99 -m32 -D_GNU_SOURCE -g -c
 LDFLAGS = -Wall -pedantic -std=c99 -m32 -D_GNU_SOURCE -static \
@@ -23,8 +22,5 @@ raise: raise.o
 raise.o: raise.c
 	$(CC) $(CFLAGS) $^
 
-test: test.c
-	gcc -Wall -m32 -g -D_GNU_SOURCE $^ -o $@
-
 clean:
-	rm -f raise test *.o *~ *.bak
+	rm -f raise *.o *~ *.bak
