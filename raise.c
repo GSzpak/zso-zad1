@@ -409,6 +409,22 @@ void set_register_values_and_jump(struct elf_prstatus *process_status)
     set_registers();
 }
 
+bool find_and_read_pt_note(int core_file_descriptor, Elf32_Ehdr *elf_header,
+                           pt_note_info_t *pt_note_info)
+{
+    // Returns true iff PT_NOTE segment was read successfully
+    Elf32_Phdr program_header;
+    for (int i = 0; i < elf_header->e_phnum; ++i) {
+        checked_read(core_file_descriptor, &program_header, sizeof(Elf32_Phdr));
+        if (program_header.p_type == PT_NOTE) {
+            read_pt_note_segment(core_file_descriptor, &program_header,
+                                 pt_note_info);
+            return true;
+        }
+    }
+    return false;
+}
+
 void read_core_file(char *file_path)
 {
     int core_file_descriptor = open_core_file(file_path);
@@ -421,29 +437,21 @@ void read_core_file(char *file_path)
             .nt_file_info.header.number_of_entries = 0
         };
     off_t current_offset;
-    bool pt_note_successfully_read = false;
 
     read_and_check_elf_header(core_file_descriptor, &elf_header);
+
+    current_offset = checked_lseek(core_file_descriptor, 0, SEEK_CUR);
+    if (!find_and_read_pt_note(core_file_descriptor, &elf_header, &pt_note_info)) {
+        exit_with_error("PT_NOTE not found in core file\n");
+    }
+    checked_lseek(core_file_descriptor, current_offset, SEEK_SET);
 
     for (int i = 0; i < elf_header.e_phnum; ++i) {
         checked_read(core_file_descriptor, &program_header, sizeof(Elf32_Phdr));
         current_offset = checked_lseek(core_file_descriptor, 0, SEEK_CUR);
-        // TODO: first read PT_NOTE, then PT_LOADS
-        switch (program_header.p_type) {
-            case PT_NOTE:
-                read_pt_note_segment(core_file_descriptor, &program_header,
-                                     &pt_note_info);
-                pt_note_successfully_read = true;
-                break;
-            case PT_LOAD:
-                if (!pt_note_successfully_read) {
-                    exit_with_error("PT_LOAD occured before PT_NOTE\n");
-                }
-                read_pt_load_segment(core_file_descriptor, &program_header,
-                                     &pt_note_info.nt_file_info);
-                break;
-            default:
-                break;
+        if (program_header.p_type == PT_LOAD) {
+            read_pt_load_segment(core_file_descriptor, &program_header,
+                                 &pt_note_info.nt_file_info);
         }
         checked_lseek(core_file_descriptor, current_offset, SEEK_SET);
     }
