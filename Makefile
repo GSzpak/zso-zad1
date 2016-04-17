@@ -2,8 +2,8 @@ TARGET: raise
 
 
 CC = gcc
-CFLAGS = -Wall -pedantic -std=c99 -m32 -D_GNU_SOURCE -g -c
-LDFLAGS = -Wall -pedantic -std=c99 -m32 -D_GNU_SOURCE -static \
+CFLAGS = -Wall -std=c99 -m32 -D_GNU_SOURCE -g -c
+LDFLAGS = -Wall -std=c99 -m32 -D_GNU_SOURCE -static \
 	-Wl,--section-start=.note.gnu.build-id=0x0065536 \
 	-Wl,--section-start=.note.ABI-tag=0x001480f6 \
 	-Wl,--section-start=.rel.plt=0x00148138 \
@@ -16,10 +16,13 @@ LDFLAGS = -Wall -pedantic -std=c99 -m32 -D_GNU_SOURCE -static \
     #-Wl,--section-start=.text=0x00200400
 
 
-raise: raise.o
+raise: raise.o raise_utils.o
 	$(CC) $(LDFLAGS) $^ -o $@
 
 raise.o: raise.c
+	$(CC) $(CFLAGS) $^
+
+raise_utils.o: raise_utils.c
 	$(CC) $(CFLAGS) $^
 
 clean:

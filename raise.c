@@ -3,15 +3,14 @@
 #include <fcntl.h>
 #include <elf.h>
 #include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/procfs.h>
 #include <sys/syscall.h>
 #include <sys/user.h>
 #include <ucontext.h>
-#include <unistd.h>
+
+#include "raise_utils.h"
 
 
 #define MAX_CHAR_BUF_SIZE 80
@@ -74,68 +73,7 @@ unsigned char set_registers_template[] = {
     0xc3                            // ret
 };
 
-
 static ucontext_t context;
-
-// TODO: move to utils
-void exit_with_error(const char *reason)
-{
-    fprintf(stderr, "%s", reason);
-    exit(EXIT_FAILURE);
-}
-
-void *checked_mmap(void *addr, size_t length, int prot, int flags,
-                   int fd, off_t offset)
-{
-    void *result = mmap(addr, length, prot, flags, fd, offset);
-    if (result == MAP_FAILED) {
-        exit_with_error("Error while calling mmap\n");
-    }
-    return result;
-}
-
-void checked_read(int fd, void *buf, size_t count)
-{
-    if (read(fd, buf, count) != count) {
-        exit_with_error("Error while calling read\n");
-    }
-}
-
-off_t checked_lseek(int fd, off_t offset, int whence)
-{
-    off_t result = lseek(fd, offset, whence);
-    if (result == (off_t) -1) {
-        exit_with_error("Error in lseek\n");
-    }
-    return result;
-}
-
-void print(const char *text)
-{
-    char buf[MAX_CHAR_BUF_SIZE] = {0x0};
-    int len = strlen(text);
-    strcpy(buf, text);
-    write(1, buf, len);
-}
-
-unsigned int aligned_to_4(unsigned int val)
-{
-    unsigned int val_mod_4 = val % 4;
-    return val_mod_4 == 0 ? val : val + (4 - val_mod_4);
-}
-
-size_t read_c_string(int file_descriptor, char *buffer)
-{
-    // Assumes, that buffer is big enough to fit the whole name
-    // Returns length of read string
-    size_t current_char_pos = 0;
-    checked_read(file_descriptor, buffer, sizeof(char));
-    while (buffer[current_char_pos] != '\0') {
-        ++current_char_pos;
-        checked_read(file_descriptor, buffer + current_char_pos, sizeof(char));
-    }
-    return current_char_pos;
-}
 
 
 void read_and_check_elf_header(int core_file_descriptor, Elf32_Ehdr *elf_header)
@@ -479,6 +417,7 @@ int main(int argc, char *argv[])
     }
 
     getcontext(&context);
+    // Prepare new stack
     context.uc_stack.ss_sp = checked_mmap(
             (void *) (STACK_TOP_ADDRESS - INITIAL_STACK_SIZE_IN_PAGES * getpagesize()),
             INITIAL_STACK_SIZE_IN_PAGES * getpagesize(),
