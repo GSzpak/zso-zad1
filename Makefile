@@ -2,7 +2,7 @@ TARGET: raise
 
 
 CC = gcc
-CFLAGS = -Wall -std=c99 -m32 -D_GNU_SOURCE -g -c
+CFLAGS = -Wall -std=c99 -m32 -D_GNU_SOURCE -c
 LDFLAGS = -Wall -std=c99 -m32 -D_GNU_SOURCE -static \
 	-Wl,--section-start=.note.gnu.build-id=0x0065536 \
 	-Wl,--section-start=.note.ABI-tag=0x001480f6 \

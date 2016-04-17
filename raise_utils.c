@@ -36,12 +36,6 @@ off_t checked_lseek(int fd, off_t offset, int whence)
     return result;
 }
 
-// TODO: remove
-void print(const char *text)
-{
-    write(1, text, strlen(text));
-}
-
 unsigned int aligned_to_4(unsigned int val)
 {
     unsigned int val_mod_4 = val % 4;

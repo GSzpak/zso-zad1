@@ -132,9 +132,6 @@ size_t read_nt_file_section(int core_file_descriptor,
     nt_file_entry_t *entries = nt_file_info->entries;
     checked_read(core_file_descriptor, header, sizeof(nt_file_header_t));
     bytes_read += sizeof(nt_file_header_t);
-    // TODO: remove
-    // TODO: check other assertions
-    assert(header->page_size = getpagesize());
     bytes_read += read_nt_file_section_entries(core_file_descriptor, header, entries);
     return bytes_read;
 }
@@ -173,18 +170,14 @@ size_t read_note_entry_descriptor(int core_file_descriptor,
     size_t bytes_read = 0;
     switch (entry_header->type) {
         case NT_FILE:
-            // TODO: remove prints
-            //print("NT_FILE\n");
             bytes_read += read_nt_file_section(core_file_descriptor,
                                                &pt_note_info->nt_file_info);
             break;
         case NT_PRSTATUS:
-            //print("NT_PRSTATUS\n");
             bytes_read += read_nt_prstatus_section(core_file_descriptor,
                                                    pt_note_info);
             break;
         case NT_386_TLS:
-            //print("NT_386_TLS\n");
             bytes_read += read_nt_386_tls_section(core_file_descriptor,
                                                   pt_note_info,
                                                   entry_header->desc_size);
@@ -195,9 +188,6 @@ size_t read_note_entry_descriptor(int core_file_descriptor,
             bytes_read += entry_header->desc_size;
             break;
     }
-    // TODO: remove
-    assert(bytes_read == entry_header->desc_size);
-
     size_t descriptor_size = entry_header->desc_size;
     size_t desc_size_aligned_to_4 = aligned_to_4(descriptor_size);
     if (desc_size_aligned_to_4 > descriptor_size) {
@@ -233,7 +223,6 @@ size_t read_note_entry(int core_file_descriptor, pt_note_info_t *pt_note_info)
 void read_pt_note_segment(int core_file_descriptor, Elf32_Phdr *program_header,
                           pt_note_info_t *pt_note_info)
 {
-    //print("Reading note segment\n");
     checked_lseek(core_file_descriptor, program_header->p_offset, SEEK_SET);
     off_t current_offset = 0;
     size_t note_section_size = program_header->p_filesz;
@@ -243,7 +232,6 @@ void read_pt_note_segment(int core_file_descriptor, Elf32_Phdr *program_header,
     }
 }
 
-// TODO: files not entirely in PT_LOAD?
 void map_files_in_interval(nt_file_info_t *nt_file_info,
                            Elf32_Phdr *pt_load_header)
 {
@@ -297,7 +285,6 @@ void set_memory_protection(void *address, size_t size, int flags_from_pt_load)
 void read_pt_load_segment(int core_file_descriptor, Elf32_Phdr *pt_load_header,
                           nt_file_info_t *nt_file_info)
 {
-    //print("Reading load segment\n");
     void *memory_adress = (void *) pt_load_header->p_vaddr;
     size_t memory_size = pt_load_header->p_memsz;
     size_t size_to_copy = pt_load_header->p_filesz;
@@ -395,6 +382,7 @@ void read_core_file(char *file_path)
     }
 
     if (close(core_file_descriptor) != 0) {
+        // TODO: should we exit here?
         exit_with_error("Error while closing core file\n");
     }
     if (!pt_note_info.nt_prstatus_found) {
