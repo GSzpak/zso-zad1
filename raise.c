@@ -13,7 +13,9 @@
 #include "raise_utils.h"
 
 
-#define MAX_CHAR_BUF_SIZE 80
+#define DEFAULT_LOAD_ADDRESS 0x8048000
+#define USER_SPACE_END 0xc0000000
+#define MAX_CHAR_BUF_SIZE 128
 #define MAX_NT_FILE_ENTRIES_NUM 1000
 #define STACK_TOP_ADDRESS 0x8000000
 #define INITIAL_STACK_SIZE_IN_PAGES 33
@@ -74,6 +76,7 @@ unsigned char set_registers_template[] = {
 };
 
 static ucontext_t context;
+static char core_file_path[MAX_CHAR_BUF_SIZE];
 
 
 void read_and_check_elf_header(int core_file_descriptor, Elf32_Ehdr *elf_header)
@@ -255,9 +258,7 @@ void map_files_in_interval(nt_file_info_t *nt_file_info,
                          memory_size, PROT_WRITE,
                          MAP_FIXED | MAP_PRIVATE,
                          file_descriptor, file_offset);
-            if (close(file_descriptor) != 0) {
-                exit_with_error("Error while closing mapped file\n");
-            }
+            close(file_descriptor);
         }
     }
 }
@@ -265,9 +266,8 @@ void map_files_in_interval(nt_file_info_t *nt_file_info,
 void set_memory_protection(void *address, size_t size, int flags_from_pt_load)
 {
     int flags = PROT_NONE;
-    // TODO: Should we set it?
-    // flags |= flags_from_pt_load & PF_MASKOS
-    // flags |= flags_from_pt_load & PF_MASKPROC
+    // OS- and processor-specific flags
+    flags |= flags_from_pt_load & (PF_MASKOS | PF_MASKPROC);
     if (flags_from_pt_load & PF_R) {
         flags |= PROT_READ;
     }
@@ -312,6 +312,7 @@ void set_register_values_and_jump(struct elf_prstatus *process_status)
     struct user_regs_struct user_regs;
 
     assert(sizeof(struct user_regs_struct) == sizeof(process_status->pr_reg));
+    // Just to make the code slightly more readable
     memcpy(&user_regs, process_status->pr_reg, sizeof(struct user_regs_struct));
     void *set_registers_addr = checked_mmap((void *) SET_REGISTERS_CODE_ADDRESS,
                                             getpagesize(),
@@ -350,9 +351,12 @@ bool find_and_read_pt_note(int core_file_descriptor, Elf32_Ehdr *elf_header,
     return false;
 }
 
-void read_core_file(char *file_path)
+void read_core_file()
 {
-    int core_file_descriptor = open_core_file(file_path);
+    // Clear memory above default load address
+    munmap((void *) DEFAULT_LOAD_ADDRESS, USER_SPACE_END - DEFAULT_LOAD_ADDRESS);
+
+    int core_file_descriptor = open_core_file(core_file_path);
 
     Elf32_Ehdr elf_header;
     Elf32_Phdr program_header;
@@ -380,11 +384,7 @@ void read_core_file(char *file_path)
         }
         checked_lseek(core_file_descriptor, current_offset, SEEK_SET);
     }
-
-    if (close(core_file_descriptor) != 0) {
-        // TODO: should we exit here?
-        exit_with_error("Error while closing core file\n");
-    }
+    close(core_file_descriptor);
     if (!pt_note_info.nt_prstatus_found) {
         exit_with_error("NT_PRSTATUS section not found in core file\n");
     }
@@ -399,10 +399,10 @@ void read_core_file(char *file_path)
 
 int main(int argc, char *argv[])
 {
-    // TODO: unmap top
     if (argc != 2) {
         exit_with_error("Usage: ./raise <core-file>\n");
     }
+    strcpy(core_file_path, argv[1]);
 
     getcontext(&context);
     // Prepare new stack
@@ -414,7 +414,7 @@ int main(int argc, char *argv[])
             -1, 0);
     context.uc_stack.ss_size = INITIAL_STACK_SIZE_IN_PAGES * getpagesize();
     context.uc_link = NULL;
-    makecontext(&context, (void (*)(void)) read_core_file, 1, argv[1]);
+    makecontext(&context, read_core_file, 0);
     setcontext(&context);
 
     return 0;
