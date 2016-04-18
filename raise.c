@@ -375,6 +375,13 @@ void read_core_file()
     }
     checked_lseek(core_file_descriptor, current_offset, SEEK_SET);
 
+    if (!pt_note_info.nt_prstatus_found) {
+        exit_with_error("NT_PRSTATUS section not found in core file\n");
+    }
+    if (!pt_note_info.nt_386_tls_found) {
+        exit_with_error("NT_386_TLS section not found in core file\n");
+    }
+
     for (int i = 0; i < elf_header.e_phnum; ++i) {
         checked_read(core_file_descriptor, &program_header, sizeof(Elf32_Phdr));
         current_offset = checked_lseek(core_file_descriptor, 0, SEEK_CUR);
@@ -385,12 +392,6 @@ void read_core_file()
         checked_lseek(core_file_descriptor, current_offset, SEEK_SET);
     }
     close(core_file_descriptor);
-    if (!pt_note_info.nt_prstatus_found) {
-        exit_with_error("NT_PRSTATUS section not found in core file\n");
-    }
-    if (!pt_note_info.nt_386_tls_found) {
-        exit_with_error("NT_386_TLS section not found in core file\n");
-    }
     if (syscall(SYS_set_thread_area, &pt_note_info.user_info) == -1) {
         exit_with_error("Error while calling set_thread_area\n");
     }
